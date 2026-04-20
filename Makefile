@@ -1,0 +1,121 @@
+#
+# Yet Another Manet IP Router (YAMIR)
+# 
+# yamir - user-space router
+# kyamir- kernel-space module
+#
+
+# verbosity - aka Kbuild/HAProxy style
+# -----------------------------------
+V ?= 0
+Q = @
+ifeq ($V,1)
+Q=
+endif
+
+ifeq ($(V),1)
+cmd_CC  = $(CC)
+cmd_LD  = $(CC)
+else
+cmd_CC   = $(Q)echo "  CC    $@";$(CC)
+cmd_LD   = $(Q)echo "  LD    $@";$(CC)
+endif
+
+# compiler flags
+# --------------
+GCC_DEPS     := -MMD -MP
+CPP_FLAGS    := -D_GNU_SOURCE -Iinclude
+YAMIR_CFLAGS := -Wall \
+	-Wextra -Wno-missing-field-initializers \
+	-Wmissing-prototypes -Wstrict-prototypes \
+	-Wno-unused-parameter \
+	-Werror=sign-compare \
+	-Werror=discarded-qualifiers \
+	-Werror=shadow=compatible-local \
+	-Werror=implicit-function-declaration \
+	$(CPP_FLAGS) $(GCC_DEPS)
+
+DEBUG_CFLAGS := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
+
+CFLAGS  = -O2 $(YAMIR_CFLAGS)
+LDFLAGS =
+
+TOPDIR=$(shell pwd)
+TARGET ?= linux
+
+ifeq ($(TARGET), linux)
+	ARCH=$(shell uname -m)
+	KDIR=/lib/modules/$(shell uname -r)/build
+	#OBJDIR=build-$(TARGET)
+else ifeq ($(TARGET), samsungs2)
+	KDIR=/home/cy/wrk/android-device/samsungs2/kernel-src
+	ARCH=arm
+	NDK_TOOLCHAIN=/home/cy/wrk/android9-toolchain/bin
+	KERN_TOOLCHAIN=/home/cy/wrk/CodeSourcery/Sourcery_G++_Lite/bin
+	PATH := $(KERN_TOOLCHAIN):$(NDK_TOOLCHAIN):$(PATH)
+	#PATH := $(NDK_TOOLCHAIN):$(PATH)
+	export PATH
+	#iKCC=arm-linux-androideabi-gcc
+	#CC=arm-none-eabi-gcc
+	CC=arm-linux-androideabi-gcc
+	#OBJDIR=$(ARCH)
+	export CROSS_COMPILE=arm-none-eabi-
+else ifeq ($(TARGET), htcdesire)
+	KDIR=/home/cy/wrk/android-device/htcdesire/kernel-src
+	ARCH=arm
+	#iKCC=arm-linux-androideabi-gcc
+	#CC=arm-none-eabi-gcc
+	NDK_TOOLCHAIN=/home/cy/wrk/android9-toolchain/bin
+	KERN_TOOLCHAIN=/home/cy/wrk/android-ndk-r5/toolchains/arm-eabi-4.4.0/prebuilt/linux-x86/bin
+	PATH := $(KERN_TOOLCHAIN):$(NDK_TOOLCHAIN):$(PATH)
+	export PATH
+	CC=arm-linux-androideabi-gcc
+	#OBJDIR=$(ARCH)
+	export CROSS_COMPILE=arm-eabi-
+else
+$(error TARGET $(TARGET) unsupported)
+endif
+
+
+YAMIR  = yamird
+KYAMIR = kyamir
+BUILD_DIR = build
+
+# default target
+# --------------
+.PHONY: all
+all : $(YAMIR) $(KYAMIR)
+
+# debug build
+# -----------
+debug: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
+debug: CFLAGS = -O0 $(YAMIR_CFLAGS) $(DEBUG_CFLAGS)
+debug: all
+
+# build-dir
+# ---------
+$(BUILD_DIR):
+	@mkdir -p $@
+
+# yamir
+# -----
+YAMIR_DIR  = yamir
+YAMIR_SRCS = $(YAMIR_DIR)/util.c $(YAMIR_DIR)/pbb.c $(YAMIR_DIR)/main.c
+YAMIR_OBJS = $(YAMIR_SRCS:$(YAMIR_DIR)/%.c=$(BUILD_DIR)/%.o)
+YAMIR_DEPS = $(YAMIR_OBJS:.o=.d)
+-include $(YAMIR_DEPS)
+$(YAMIR) : $(YAMIR_OBJS)
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(YAMIR_OBJS) -o $@
+
+$(BUILD_DIR)/%.o: $(YAMIR_DIR)/%.c | $(BUILD_DIR)
+	$(cmd_CC) $(CFLAGS) -c $< -o $@
+
+# kyamir
+# ------
+.PHONY: kyamir
+$(KYAMIR):
+	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC)
+
+clean: 
+	rm -fr $(BUILD_DIR) $(YAMIR)
+	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC) clean
