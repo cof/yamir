@@ -1,3 +1,9 @@
+/*
+ * macros to support kernel api changes
+ */
+#ifndef _COMPAT_H_
+#define _COMPAT_H_
+
 #include <linux/version.h>
 #include <linux/string.h>
 #include <net/net_namespace.h>
@@ -15,10 +21,10 @@
  */
 static inline struct net *kyamir_get_net(void) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
-    /* Network namespaces were introduced in 2.6.24 */
+    // network namespaces were introduced in 2.6.24 
     return &init_net; 
 #else
-    /* For even older kernels, namespaces didn't exist */
+    // older kernels namespaces didn't exist
     return NULL; 
 #endif
 }
@@ -29,7 +35,7 @@ static inline struct net *kyamir_get_net(void) {
     #define KYAMIR_HOOK_CAST (void *)
 #endif
 
-/* struct netlink_notify pid/portiid field rename */
+// struct netlink_notify pid/portiid field rename
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
 #  define NOTIFY_ID(n) ((n)->portid)
 #else
@@ -42,7 +48,7 @@ static inline int kyamir_register_nf_hook(struct net *net, struct nf_hook_ops *o
     // Modern: Requires namespace pointer
     return nf_register_net_hook(net, ops);
 #else
-    // S2/Desire: Global registration
+    // older S2/Desire kernels dont
     return nf_register_hook(ops);
 #endif
 }
@@ -119,4 +125,6 @@ static inline void kyamir_netlink_ack(struct sk_buff *skb, struct nlmsghdr *nlh,
     netlink_ack(skb, nlh, err);
 #endif
 }
+
+#endif
 
