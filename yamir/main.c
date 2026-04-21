@@ -91,6 +91,7 @@
 #include <unistd.h>
 
 #include "util.h"
+#include "log.h"
 #include "list.h"
 #include "netlink.h"
 #include "pbb.h"
@@ -1550,6 +1551,7 @@ int main(int argc, char *argv[])
     struct yamir_serv serv;
 
     util_init();
+    log_init(NULL, LOG_INFO);
     yamir_init(&serv);
 
     if (parse_argv(&serv, argc, argv)) exit(1);

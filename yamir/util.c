@@ -9,42 +9,6 @@
 
 #include "util.h"
 
-// logger api
-int log_level = 0;
-static FILE *log_fd = NULL;
-
-void _log_msg(const char *file, int line, const char *func,
-    int ec, int what, const char *who,
-    const char *fmt, ...)
-{
-    if (!who) {
-        switch(what) {
-        case LOG_INFO:  who = "INFO";  break;
-        case LOG_DEBUG: who = "DEBUG"; break;
-        case LOG_ERROR: who = "ERROR"; break;
-        case LOG_FATAL: who = "FATAL"; break;
-        }
-    }
-
-    if (who) fprintf(log_fd, "[%s] ", who);
-    if (what && file && func) fprintf(log_fd, "%s:%d (%s): ", file, line, func);
-    if (!what && file && func) fprintf(log_fd, "%s: %s: ", file, func);
-
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(log_fd, fmt, args);
-    va_end(args);
-
-    // add errno
-    if (ec) fprintf(log_fd, ": %s (errno: %d)", strerror(ec), ec);
-
-    // flush
-    fputc('\n', log_fd);
-
-    // fatal-check
-    if (what == LOG_FATAL) exit(1);
-}
-
 static struct timerheap *heap = NULL;
 
 /* minium binary heap aka priortity queue
@@ -380,8 +344,6 @@ struct inthash_table *inthash_table_create(int size)
 
 void util_init()
 {
-    log_fd = stderr;
-    log_level = LOG_INFO;
     heap = timerheap_new();
 }
 

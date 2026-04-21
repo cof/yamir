@@ -18,42 +18,6 @@
 #define MAX(a,b) (a) > (b) ? (a) : (b)
 #define UTIL_FAIL -1
 
-
-/* logger api */
-#define LOG_NONE  0
-#define LOG_FATAL 1
-#define LOG_ERROR 2
-#define LOG_INFO  3
-#define LOG_DEBUG 4
-
-extern int log_level;
-
-void _log_msg(const char *file, int line, const char *func, 
-    int ec, int what, const char *what_str, const char *fmt, ...)
-    __attribute__((format(printf, 7, 8)));
-
-#define log_info(who, ...) \
-    if (log_level >= LOG_INFO) _log_msg(NULL, 0, NULL, 0, LOG_INFO, who, __VA_ARGS__)
-
-#define log_error_rf(...) ({ \
-    if (log_level >= LOG_ERROR) { \
-        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
-    }\
-    UTIL_FAIL; \
-})
-
-#define log_errno_rf(...) ({ \
-    if (log_level >= LOG_ERROR) { \
-        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
-    } \
-    UTIL_FAIL; \
-})
-
-#define log_debug(...) \
-    if (log_level >= LOG_DEBUG) { \
-        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_DEBUG, NULL, __VA_ARGS__); \
-    }
-
 static inline const char *get_basename(const char *path)
 {
     if (!path) return NULL;

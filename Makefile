@@ -3,7 +3,12 @@
 # 
 # yamird - user-space router
 # kyamir- kernel-space module
+# test_runner - test runner
 #
+
+CC = gcc
+LD = gcc
+CTAGS = ctags
 
 # verbosity - aka Kbuild/HAProxy style
 # -----------------------------------
@@ -24,7 +29,7 @@ endif
 # compiler flags
 # --------------
 GCC_DEPS     := -MMD -MP
-CPP_FLAGS    := -D_GNU_SOURCE -Iinclude
+CPP_FLAGS    := -D_GNU_SOURCE -Iinclude -Iyamir
 YAMIR_CFLAGS := -Wall \
 	-Wextra -Wno-missing-field-initializers \
 	-Wmissing-prototypes -Wstrict-prototypes \
@@ -88,9 +93,8 @@ all : $(YAMIR) $(KYAMIR)
 
 # debug build
 # -----------
-debug: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
 debug: CFLAGS = -O0 $(YAMIR_CFLAGS) $(DEBUG_CFLAGS)
-debug: all
+debug: all test_runner
 
 # build-dir
 # ---------
@@ -100,13 +104,14 @@ $(BUILD_DIR):
 # yamir
 # -----
 YAMIR_DIR  = yamir
-YAMIR_SRCS = $(YAMIR_DIR)/util.c $(YAMIR_DIR)/pbb.c $(YAMIR_DIR)/main.c
+YAMIR_SRCS = $(YAMIR_DIR)/util.c $(YAMIR_DIR)/log.c $(YAMIR_DIR)/pbb.c $(YAMIR_DIR)/main.c
 YAMIR_OBJS = $(YAMIR_SRCS:$(YAMIR_DIR)/%.c=$(BUILD_DIR)/%.o)
 YAMIR_DEPS = $(YAMIR_OBJS:.o=.d)
 -include $(YAMIR_DEPS)
 $(YAMIR) : $(YAMIR_OBJS)
 	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(YAMIR_OBJS) -o $@
 
+# build rule for yamir files
 $(BUILD_DIR)/%.o: $(YAMIR_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
@@ -116,6 +121,42 @@ $(BUILD_DIR)/%.o: $(YAMIR_DIR)/%.c | $(BUILD_DIR)
 $(KYAMIR):
 	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC)
 
+# test-runner
+# -----------
+TEST_DIR  = tests
+TEST_RUNNER = test_runner
+TEST_SRCS = $(YAMIR_DIR)/log.c $(YAMIR_DIR)/pbb.c $(TEST_DIR)/runner.c
+TEST_OBJS = $(addprefix $(BUILD_DIR)/, $(notdir $(TEST_SRCS:.c=.o)))
+TEST_DEPS = $(TEST_OBJS:.o=.d)
+-include $(TEST_DEPS)
+$(TEST_RUNNER) : $(TEST_OBJS)
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(TEST_OBJS) -o $@
+
+# build rule for test files
+$(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
+	$(cmd_CC) $(CFLAGS) -c $< -o $@
+
+TEST_FILES = tests/rfc5444_core.txt
+
+# test
+# ----
+.PHONY: test
+test: $(TEST_RUNNER)
+	./$(TEST_RUNNER) $(TEST_FILES)
+
+
+# tags file
+# ----------
+.PHONY: tags
+SOURCES = $(wildcard yamir/*.c yamir/*.h)
+tags: $(SOURCES)
+	@echo "Creating tags file"
+	$(Q)$(CTAGS) $(SOURCES)
+
+# clean
+# -----
+.PHONY: clean
 clean: 
-	rm -fr $(BUILD_DIR) $(YAMIR)
+	rm -fr $(BUILD_DIR) $(YAMIR) $(TEST_RUNNER)
 	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC) clean

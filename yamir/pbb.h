@@ -15,7 +15,7 @@
 #define _PPB_H_
 
 #include <stdbool.h>
-#include <sys/types.h>
+#include <stdint.h>
 
 #define PBB_HDR_MAXTLV  16
 #define PBB_MSG_MAXTLV  8
@@ -120,9 +120,9 @@ struct pbb_tlv {
 #define TLVF_TYPEEXT     (1 << 7)
 #define TLVF_SINGLEINDEX (1 << 6)
 #define TLVF_MULTIINDEX  (1 << 5)
-#define TLVF_VALUE       (1 << 5)
-#define TLVF_EXTVALUE    (1 << 4)
-#define TLVF_MULTIVALUE  (1 << 3)
+#define TLVF_VALUE       (1 << 4)
+#define TLVF_EXTVALUE    (1 << 3)
+#define TLVF_MULTIVALUE  (1 << 2)
 
 // well nown tlvs
 #define PBB_TLV_VALIDITY (1 << 8)
@@ -292,7 +292,7 @@ static inline bool pbb_msg_has_seqn(const struct pbb_msg *msg)
     return msg->flags & PBB_MF_SEQN;
 }
 
-enum PKT_FIELD {
+enum pkt_field {
     PF_NONE = 0,
     PF_PKT_VER_FLAGS,
     PF_PKT_SEQ_NUM,
@@ -341,7 +341,7 @@ int pkt_buf_decode_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr);
 int pkt_buf_decode_msg(struct pkt_buf *buf, struct pbb_msg *msg);
 
 const char *pbb_addr_tostr(size_t len, uint8_t addr[static len]);
-const char *ppb_type_tostr(uint32_t type);
-int ppb_msg_tostr(struct pbb_msg *msg, char *buf, size_t len);
+const char *pbb_type_tostr(uint32_t type);
+int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len);
 
 #endif

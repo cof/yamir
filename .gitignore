@@ -1,0 +1,5 @@
+*.swp
+*.o
+*.ko
+/yamird
+/build

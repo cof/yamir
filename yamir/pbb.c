@@ -9,9 +9,16 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 #include <stdarg.h>
-#include "util.h"
+#include <arpa/inet.h>
+
+#include "log.h"
 #include "pbb.h"
+
+#ifndef ARR_LEN
+#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0])) 
+#endif 
 
 static char *field2str[] = {
     [PF_NONE] = "none",
@@ -89,15 +96,19 @@ static inline uint32_t dec_u32(uint8_t *ptr, int size)
     }
 }
 
+static int dec_err(struct pkt_buf *buf, size_t len, enum pkt_field field)
+{
+    log_debug("decode_error(%s) at offset %zu. Have %zu need %zu",
+        field2str[field], pkt_buf_used(buf), pkt_buf_avail(buf), len);
 
-static uint8_t *dec_next(struct pkt_buf *buf, size_t len, enum PKT_FIELD field)
+    return -1;
+}
+
+static uint8_t *dec_next(struct pkt_buf *buf, size_t len, enum pkt_field field)
 {
     uint8_t *ptr = pkt_buf_mkspace(buf, len);
 
-    if (!ptr) {
-        log_debug("decode_error(%s) at offset %zu. Have %zu need %zu",
-            field2str[field], pkt_buf_used(buf), pkt_buf_avail(buf), len);
-    }
+    if (!ptr) dec_err(buf, len, field);
 
     return ptr;
 }
@@ -129,9 +140,9 @@ static void load_node_tlv(struct pbb_ablk *ablk, struct pbb_tlv *tlv)
 
     int single_len = 0;
     if (tlv->flags & TLVF_VALUE) {
-        int num_idx = idx_stop - idx_start + 1;
+        int num_val = idx_stop - idx_start + 1;
         single_len = tlv->flags & TLVF_MULTIVALUE
-            ? tlv->length / num_idx
+            ? tlv->length / num_val
             : tlv->length;
     }
 
@@ -165,6 +176,8 @@ static void load_node_tlv(struct pbb_ablk *ablk, struct pbb_tlv *tlv)
 
 static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
+    log_debug("buf_len=%zu", pkt_buf_avail(buf));
+
     memset(tlv, 0, sizeof(*tlv));
 
     uint8_t *ptr = dec_next(buf, 1, PF_TLV_TYPE);
@@ -219,7 +232,7 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
         break;
     }
 
-    log_debug("pbb-tlv [type=%d flags=0x%0x istart=%d iend=%d len=%d)",
+    log_debug("pbb-tlv [type=%d flags=0x%0x idx_start=%d idx_end=%d len=%d]",
         tlv->type, tlv->flags, tlv->index_start, tlv->index_stop, tlv->length);
 
     return 0;
@@ -227,6 +240,8 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 
 static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ablk *ablk)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PF_TLVBLK_LENGTH);
     if (!ptr) return -1;
@@ -240,7 +255,7 @@ static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ablk *ablk)
     struct pbb_tlv tlv;
 
     while (pkt_buf_avail(&tlv_buf))  {
-        if (dec_pbb_tlv(buf, &tlv)) return -1;
+        if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         load_node_tlv(ablk, &tlv);
     }
 
@@ -249,6 +264,8 @@ static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ablk *ablk)
 
 static void expand_addr(struct pbb_ablk *ablk, struct pbb_msg *msg)
 {
+    log_debug("num_addr=%d", ablk->num_addr);
+
     uint8_t buf[512];
 
     for (int i = 0; i < ablk->num_addr; i++) {
@@ -288,6 +305,8 @@ static void expand_addr(struct pbb_ablk *ablk, struct pbb_msg *msg)
             have_prefix = true;
         }
 
+        log_debug("addr=%s/%d ", pbb_addr_tostr(addr_len, buf), prefix);
+
         // add new msg-node
         if (msg->num_node >= ARR_LEN(msg->nodes)) continue;
         struct msg_node *mn = &msg->nodes[msg->num_node++];
@@ -300,8 +319,11 @@ static void expand_addr(struct pbb_ablk *ablk, struct pbb_msg *msg)
     }
 }
 
+// decode address block
 static int dec_pbb_ablk(struct pkt_buf *buf, struct pbb_ablk *ablk)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     uint8_t *ptr = dec_next(buf, 1, PF_ADRBLK_NUM_ADDR);
     if (!ptr) return -1;
     ablk->num_addr = dec_u32(ptr, 1);
@@ -314,19 +336,19 @@ static int dec_pbb_ablk(struct pkt_buf *buf, struct pbb_ablk *ablk)
         ptr = dec_next(buf, 1, PF_ADRBLK_HEAD_LEN);
         if (!ptr) return -1;
         ablk->head_len = dec_u32(ptr, 1);
-        ptr = dec_next(buf, 1, PF_ADRBLK_HEAD);
+        ptr = dec_next(buf, ablk->head_len, PF_ADRBLK_HEAD);
         if (!ptr) return -1;
         ablk->head = ptr;
     }
 
-    // table 1
+    // table 1 : ahasfulltail and ahaszerotail flags  
     switch(ablk->flags & (PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL)) {
     case PBB_ABF_FULLTAIL:
         ptr = dec_next(buf, 1, PF_ADRBLK_TAIL_LEN);
         if (!ptr) return -1;
         ablk->tail_len = dec_u32(ptr, 1);
         ptr = dec_next(buf, ablk->tail_len, PF_ADRBLK_TAIL);
-        if (ptr) return -1;
+        if (!ptr) return -1;
         ablk->tail = ptr;
         break;
     case PBB_ABF_ZEROTAIL:
@@ -341,7 +363,7 @@ static int dec_pbb_ablk(struct pkt_buf *buf, struct pbb_ablk *ablk)
     if (!ptr) return -1;
     ablk->mid = ptr;
 
-    // table 2
+    // table 2 : ahassingleprelen and ahasmultiprelen flags
     switch(ablk->flags & (PBB_ABF_SPRELEN | PBB_ABF_MPRELEN)) {
     case PBB_ABF_SPRELEN:
         ptr = dec_next(buf, 1, PF_ADRBLK_PREFIX_LEN);
@@ -360,6 +382,8 @@ static int dec_pbb_ablk(struct pkt_buf *buf, struct pbb_ablk *ablk)
 
 static int dec_msg_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     uint8_t head[32];
     uint8_t tail[32];
     uint8_t mid[512];
@@ -385,10 +409,14 @@ static int dec_msg_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 
 static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PF_TLVBLK_LENGTH);
     if (!ptr) return -1;
     uint16_t tlvs_len = dec_u32(ptr, 2);
+
+    log_debug("tlvs-len=%d", tlvs_len);
 
     // tlvs-data
     ptr = dec_next(buf, tlvs_len, PF_TLVBLK_TLVS);
@@ -398,7 +426,7 @@ static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
     struct pbb_tlv tlv;
 
     while (pkt_buf_avail(&tlv_buf))  {
-        if (dec_pbb_tlv(buf, &tlv)) return -1;
+        if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         switch(tlv.type) {
         case PBB_TLV_DID:
             msg->did = dec_u32(tlv.value, tlv.length);
@@ -415,8 +443,8 @@ static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
     return 0;
 }
 
-// encode optional fields
-static int dec_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
+// decode optional fields
+static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
 {
     uint8_t *ptr;
 
@@ -441,8 +469,12 @@ static int dec_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
     if (pbb_msg_has_seqn(msg)) {
         ptr = dec_next(buf, 2, PF_MSG_SEQ_NUM);
         if (!ptr) return -1;
-        msg->hop_limit = dec_u32(ptr, 2);
+        msg->seq_num = dec_u32(ptr, 2);
     }
+
+    log_debug("msg-flds [orig=%s hlim=%d hcnt=%d seqn=%d]", 
+        pbb_msg_has_orig(msg) ? pbb_addr_tostr(msg->addr_len, msg->orig_addr) : "",
+        msg->hop_limit, msg->hop_limit, msg->seq_num);
 
     return 0;
 }
@@ -450,32 +482,44 @@ static int dec_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 decode <message>
 static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     pbb_msg_reset(msg);
 
-    uint8_t *hdr = dec_next(buf, 4, PF_MSG_HDR);
-    if (!hdr) return -1;
+    uint8_t *ptr = dec_next(buf, 4, PF_MSG_HDR);
+    if (!ptr) return -1;
 
-    msg->type = hdr[0];
-    msg->flags = hdr[1] >> 4;
-    msg->addr_len = (hdr[1] & 0xf) + 1;
-    msg->size = dec_u32(hdr + 2, 2);
+    msg->type = ptr[0];
+    msg->flags = ptr[1] >> 4;
+    msg->addr_len = (ptr[1] & 0xf) + 1;
+    msg->size = dec_u32(ptr + 2, 2);
 
-    log_debug("msg-hdr [type=%d flags=0x%x addr_len=%d size=%d]", 
-        msg->type, msg->flags, msg->addr_len, msg->size);
+    log_debug("msg-hdr [type=%s flags=0x%x addr_len=%d size=%d]", 
+        pbb_type_tostr(msg->type), msg->flags, msg->addr_len, msg->size);
 
-    if (dec_msg_fields(buf, msg)) return -1;
-    if (dec_msg_tlvs(buf, msg)) return -1;
-    if (dec_msg_nodes(buf, msg)) return -1;
+    // msg-size
+    if (msg->size < 4) return dec_err(buf, 4 - msg->size, PF_MSG_SIZE);
+    ptr = dec_next(buf, msg->size - 4, PF_MSG_SIZE);
+    if (!ptr) return -1;
+    struct pkt_buf msg_buf = PKT_BUF_INIT(ptr, msg->size - 4);
+
+    if (dec_msg_flds(&msg_buf, msg)) return -1;
+    if (dec_msg_tlvs(&msg_buf, msg)) return -1;
+    if (dec_msg_nodes(&msg_buf, msg)) return -1;
 
     return 0;
 }
 
 static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PF_TLVBLK_LENGTH);
     if (!ptr) return -1;
     uint16_t tlvs_len = dec_u32(ptr, 2);
+
+    log_debug("tlvs-len=%d", tlvs_len);
 
     // tlvs-data
     ptr = dec_next(buf, tlvs_len, PF_TLVBLK_TLVS);
@@ -485,7 +529,7 @@ static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
     struct pbb_tlv tlv;
 
     while (pkt_buf_avail(&tlv_buf))  {
-        if (dec_pbb_tlv(buf, &tlv)) return -1;
+        if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         if (hdr->num_tlv < ARR_LEN(hdr->tlvs)) {
             hdr->tlvs[hdr->num_tlv++] = tlv;
         }
@@ -497,6 +541,8 @@ static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int dec_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
+    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+
     pbb_hdr_reset(hdr);
 
     uint8_t *ptr = dec_next(buf, 1, PF_PKT_VER_FLAGS);
@@ -511,8 +557,10 @@ static int dec_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
         hdr->seq_num = dec_u32(ptr, 2);
     }
 
-    if (pbb_has_tlv(hdr)) {
-        if (dec_hdr_tlvs(buf, hdr)) return -1;
+    log_debug("pkt-hdr [ver=%d flags=0x%x seqnum=%d ]", hdr->version, hdr->flags, hdr->seq_num);
+
+    if (pbb_has_tlv(hdr) && dec_hdr_tlvs(buf, hdr)) {
+        return -1;
     }
 
     return 0;
@@ -991,23 +1039,8 @@ const char *pbb_addr_tostr(size_t len, uint8_t addr[static len])
     size_t size = sizeof(bufs[0]);
     idx = (idx + 1) & 3;
 
-    if (len == 4) {
-        snprintf(buf, size, "%d.%d.%d.%d", addr[0], addr[1], addr[2], addr[3]);
-        return buf;
-    }
-
-    if (len == 16) {
-        snprintf(buf, size, "%x:%x:%x:%x:%x:%x:%x:%x",
-            dec_u32(addr + 0, 2),
-            dec_u32(addr + 2, 2),
-            dec_u32(addr + 4, 2),
-            dec_u32(addr + 6, 2),
-            dec_u32(addr + 8, 2),
-            dec_u32(addr + 10, 2),
-            dec_u32(addr + 12, 2),
-            dec_u32(addr + 14, 2));
-        return buf;
-    }
+    if (len == 4 && inet_ntop(AF_INET, addr, buf, size)) return buf;
+    if (len == 16 && inet_ntop(AF_INET6, addr, buf, size)) return buf;
 
     return "";
 }
@@ -1041,7 +1074,7 @@ static char *u32_tostr(uint32_t val)
 }
 
 // Mobile Ad hoc NETwork (MANET) Parameters
-const char *ppb_type_tostr(uint32_t type)
+const char *pbb_type_tostr(uint32_t type)
 {
     switch(type) {
 	case  0:  return "HELLO";
@@ -1058,7 +1091,7 @@ const char *ppb_type_tostr(uint32_t type)
 size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 {
     size_t len = pkt_buf_avail(buf);
-    char *str = pkt_buf_start(buf);
+    char *str = pkt_buf_ptr(buf);
 
     va_list args;
     va_start(args, fmt);
@@ -1069,21 +1102,21 @@ size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 
     if ((size_t) nw >= len) {
         pkt_buf_endz(buf);
-        buf->ptr = buf->end;
         nw = len;
     }
+    buf->ptr += nw;
 
     return nw;
 }
 
 #define pbb_printf pkt_buf_printf
 
-int ppb_msg_tostr(struct pbb_msg *msg, char *mem, size_t len)
+int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len)
 {
-    struct pkt_buf buf = PKT_BUF_INIT(mem, len);
+    struct pkt_buf buf = PKT_BUF_INIT(str, len);
 
     pbb_printf(&buf, "[MSG: type=%s flags=0x%x addr_len=%d size=%d",
-        ppb_type_tostr(msg->type), msg->flags, msg->addr_len, msg->size
+        pbb_type_tostr(msg->type), msg->flags, msg->addr_len, msg->size
     );
 
     if (pbb_msg_has_orig(msg)) pbb_printf(&buf, " orig=%s", pbb_addr_tostr(msg->addr_len, msg->orig_addr));
