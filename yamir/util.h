@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+/* macros */
 #define mkptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 
@@ -15,10 +16,10 @@
 #endif 
 
 #define MAX(a,b) (a) > (b) ? (a) : (b)
-
 #define UTIL_FAIL -1
 
-// logger api
+
+/* logger api */
 #define LOG_NONE  0
 #define LOG_FATAL 1
 #define LOG_ERROR 2
@@ -60,7 +61,7 @@ static inline const char *get_basename(const char *path)
     return base ? base + 1 : path;
 }
 
-// timer api
+/* timer api */
 struct timer {
     void (*cb_fn) (void *cb_arg);
     void *cb_arg;
@@ -81,7 +82,7 @@ struct timer *timer_add_wsec(void (*cb_fn)(void *cb_arg),
     void *cb_arg, time_t sec);
 void timer_process(int *wait_msec);
 
-// hashmap api
+/* hashmap api */
 struct inthash_entry {
     struct inthash_entry *next;
     uint32_t key;
