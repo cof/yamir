@@ -1,7 +1,7 @@
 #
-# Yet Another Manet Ip Router
+# Yet Another Manet IP Router
 #
-# kernel modules
+# kernel module
 #
 .PHONY : all clean doc
 
@@ -10,7 +10,7 @@
 #
 
 ifneq ($(KERNELRELEASE),)
-    obj-m = kyamir.o
+	obj-m = kyamir.o
 	ccflags-y += -I$(src)/../include
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
