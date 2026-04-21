@@ -1077,9 +1077,9 @@ static char *u32_tostr(uint32_t val)
 const char *pbb_type_tostr(uint32_t type)
 {
     switch(type) {
-	case  0:  return "HELLO";
-	case  1:  return "TC";
-	// DYMO / AODV2 
+    case  0:  return "HELLO";
+    case  1:  return "TC";
+    // DYMO / AODV2 
     case 10:  return "RREQ";
     case 11:  return "RREP";
     case 12:  return "RERR";
