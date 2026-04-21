@@ -1,5 +1,8 @@
 *.swp
 *.o
 *.ko
+.gdb_history
+tags
 /yamird
+/test_runner
 /build
