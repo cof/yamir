@@ -9,6 +9,7 @@
  */
 
 #include <stdio.h>
+#include <stdarg.h>
 #include "util.h"
 #include "pbb.h"
 
@@ -271,9 +272,8 @@ static void expand_addr(struct pbb_ablk *ablk, struct pbb_msg *msg)
             ptr += ablk->tail_len;
         }
 
-        size_t len = ptr - buf;
-        if (len > PPB_MAX_ADDRLEN) continue;
-        uint32_t addr = dec_u32(buf, len);
+        size_t addr_len = ptr - buf;
+        if (addr_len > 16) continue;
 
         // now the prefix
         bool have_prefix = false;
@@ -293,7 +293,7 @@ static void expand_addr(struct pbb_ablk *ablk, struct pbb_msg *msg)
         struct msg_node *mn = &msg->nodes[msg->num_node++];
         memset(mn, 0, sizeof(*mn));
 
-        mn->addr = addr;
+        memcpy(mn->addr, buf, addr_len);
         mn->prefix = prefix;
         if (have_prefix) mn->flags |= PBB_NF_PREF;
         ablk->nodes[i] = mn;
@@ -782,7 +782,7 @@ static bool compress_addr(struct pbb_ablk *ablk, struct msg_node *mn)
     if (!added) return false;
 
     // now add the prefix
-    if (mn_has_prefix(mn)) {
+    if (mn_has_pref(mn)) {
         if (ablk->flags & PBB_ABF_SPRELEN) {
             // already have a single prefix
             if (*ablk->prefix != mn->prefix) {
@@ -980,57 +980,137 @@ int pkt_buf_decode_msg(struct pkt_buf *buf, struct pbb_msg *msg)
     return dec_pbb_msg(buf, msg);
 }
 
-#define ADDR_STRLEN sizeof("225.255.255.255")
+#define ADDR_STRLEN sizeof("ffff:ffff:ffff:ffff:ffff:ffff:fffff:ffff")
 
-const char *pbb_addr_tostr(uint32_t addr)
+const char *pbb_addr_tostr(size_t len, uint8_t addr[static len])
 {
     static char bufs[4][ADDR_STRLEN]; 
     static int idx;
 
     char *buf = bufs[idx];
-    size_t len = sizeof(bufs[0]);
+    size_t size = sizeof(bufs[0]);
     idx = (idx + 1) & 3;
 
-    uint8_t *ptr = (uint8_t *) &addr;
-    snprintf(buf, len, "%d.%d.%d.%d", ptr[0], ptr[1], ptr[2], ptr[3]);
+    if (len == 4) {
+        snprintf(buf, size, "%d.%d.%d.%d", addr[0], addr[1], addr[2], addr[3]);
+        return buf;
+    }
 
-    return buf;
+    if (len == 16) {
+        snprintf(buf, size, "%x:%x:%x:%x:%x:%x:%x:%x",
+            dec_u32(addr + 0, 2),
+            dec_u32(addr + 2, 2),
+            dec_u32(addr + 4, 2),
+            dec_u32(addr + 6, 2),
+            dec_u32(addr + 8, 2),
+            dec_u32(addr + 10, 2),
+            dec_u32(addr + 12, 2),
+            dec_u32(addr + 14, 2));
+        return buf;
+    }
+
+    return "";
 }
 
+static char *u32toa(uint32_t val, char *buf, size_t len)
+{
+    if (!buf || len == 0) return buf;
+
+    // start at buffer end - no reverse needed
+    char *str = &buf[len -1];
+    *str = '\0';
+    if (val == 0) *--str = '0';
+
+    while (val) {
+        *--str = (val % 10) + '0';
+        val /= 10;
+    }
+
+    return str; 
+}
+
+static char *u32_tostr(uint32_t val) 
+{
+    static char bufs[16][10];
+    static int idx;
+
+    char *str = bufs[idx];
+    idx = (idx + 1) & 15;
+
+    return u32toa(val, str, sizeof(bufs[0][0]));
+}
+
+// Mobile Ad hoc NETwork (MANET) Parameters
 const char *ppb_type_tostr(uint32_t type)
 {
     switch(type) {
-    case 10:  return "DYMO_RREQ";
-    case 11:  return "DYMO_RREP";
-    case 12:  return "DYMO_RERR";
-    default:  return "???";
+	case  0:  return "HELLO";
+	case  1:  return "TC";
+	// DYMO / AODV2 
+    case 10:  return "RREQ";
+    case 11:  return "RREP";
+    case 12:  return "RERR";
+    case 13:  return "RREP-ACK";
+    default:  return u32_tostr(type);
     }
 }
 
-int ppb_msg_tostr(struct pbb_msg *msg, char *buf, size_t len)
+size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 {
-    char *ptr = buf;
-    char *end = buf + len;
+    size_t len = pkt_buf_avail(buf);
+    char *str = pkt_buf_start(buf);
 
-    int nw = snprintf(ptr, end - ptr,
-        "msg type=%s hop-limit=%d hop-count=%d seqnum=%d did=%u\n",
-        ppb_type_tostr(msg->type),
-        msg->hop_limit, msg->hop_count, msg->seq_num, msg->did);
+    va_list args;
+    va_start(args, fmt);
+    int nw = vsnprintf(str, len, fmt, args);
+    va_end(args);
 
     if (nw < 0) return 0;
-    if (nw >= end - ptr) return 0;
-    ptr += nw;
 
+    if ((size_t) nw >= len) {
+        pkt_buf_endz(buf);
+        buf->ptr = buf->end;
+        nw = len;
+    }
+
+    return nw;
+}
+
+#define pbb_printf pkt_buf_printf
+
+int ppb_msg_tostr(struct pbb_msg *msg, char *mem, size_t len)
+{
+    struct pkt_buf buf = PKT_BUF_INIT(mem, len);
+
+    pbb_printf(&buf, "[MSG: type=%s flags=0x%x addr_len=%d size=%d",
+        ppb_type_tostr(msg->type), msg->flags, msg->addr_len, msg->size
+    );
+
+    if (pbb_msg_has_orig(msg)) pbb_printf(&buf, " orig=%s", pbb_addr_tostr(msg->addr_len, msg->orig_addr));
+    if (pbb_msg_has_hlim(msg)) pbb_printf(&buf, " hlim=%d", msg->hop_limit);
+    if (pbb_msg_has_hcnt(msg)) pbb_printf(&buf, " hlim=%d", msg->hop_count);
+    if (pbb_msg_has_seqn(msg)) pbb_printf(&buf, " seqn=%d", msg->seq_num);
+    pbb_printf(&buf, " ]\n");
+
+    // tlv-block
+    for (int i = 0; i < msg->num_tlv; i++) {
+        struct pbb_tlv *tlv = &msg->tlvs[i];
+        pbb_printf(&buf, "[ TLV: type=%d flags=0x%0x ]", tlv->type, tlv->flags);
+    }
+
+    // addr-block (msg-node)
     for (int i = 0; i < msg->num_node; i++) {
         struct msg_node *mn = &msg->nodes[i];
-        nw = snprintf(ptr, end - ptr,
-            " addr(%s,0x%x,%d,%d,%d)\n",
-            pbb_addr_tostr(mn->addr), 
-            mn->flags, mn->seqnum, mn->prefix, mn->dist);
-        if (nw < 0) return -1;
-        if (nw >= end - ptr) return -1;
+        pbb_printf(&buf, "[ ADDR: %s", pbb_addr_tostr(msg->addr_len, mn->addr));
+        pbb_printf(&buf, " flags=0x%x", mn->flags);
+        if (mn_has_dist(mn)) pbb_printf(&buf, " dist=%u", mn->dist);
+        if (mn_has_dist(mn)) pbb_printf(&buf, " dist=%u", mn->dist);
+        if (mn_has_vtim(mn)) pbb_printf(&buf, " vtim=%u", mn->dist);
+        if (mn_has_seqn(mn)) pbb_printf(&buf, " vtim=%u", mn->seqnum);
+        if (mn_has_pref(mn)) pbb_printf(&buf, " pref=%u", mn->prefix);
+        pbb_printf(&buf, " ]\n");
     }
 
     // return nw
-    return ptr - buf;
+    return pkt_buf_used(&buf);
 }

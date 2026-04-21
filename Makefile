@@ -1,7 +1,7 @@
 #
 # Yet Another Manet IP Router (YAMIR)
 # 
-# yamir - user-space router
+# yamird - user-space router
 # kyamir- kernel-space module
 #
 

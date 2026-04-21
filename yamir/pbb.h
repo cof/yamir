@@ -4,7 +4,7 @@
  * A lightweight PacketBB (rfc5444) codec API for encoding/decoding MANET packets.
  *
  * - Structure-composable: built for inline embedding, object compostion & memory locality
- * - full rfc54444 support for encoding/decoding wire-format MANET packets/messages.
+ * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
  * - provides buffer, header and message structures for easy pkt generation.
  *
  * Refs
@@ -43,6 +43,16 @@ static inline void pkt_buf_init(struct pkt_buf *buf, void *data, size_t len)
     buf->end  = buf->ptr + len;
 }
 
+static inline void *pkt_buf_start(struct pkt_buf *buf)
+{
+    return buf->data;
+}
+
+static inline void *pkt_buf_ptr(struct pkt_buf *buf)
+{
+    return buf->ptr;
+}
+
 static inline void pkt_buf_reset(struct pkt_buf *buf)
 {
     buf->ptr = buf->data;
@@ -78,6 +88,15 @@ static inline uint8_t *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
 
     return ptr;
 }
+
+static inline void pkt_buf_endz(struct pkt_buf *buf)
+{
+    if (buf->ptr < buf->end) *buf->ptr = '\0';
+}
+
+size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+
 
 // 5.3 <addr-flags> 8-bit field - network order (i.e MSB is bit 0) 
 #define PBB_ABF_HEAD     (1 << 7) // ahashead
@@ -152,7 +171,11 @@ static inline bool pbb_has_tlv(const struct pbb_hdr *hdr)
 
 // message node (MN)
 struct msg_node {
-    uint32_t addr;
+    union {
+        uint8_t  addr[16];
+        uint32_t ip4_addr;
+        uint16_t ip6_addr[8];
+    };
     uint32_t dist;
     uint32_t vldtime;
     uint16_t seqnum;
@@ -188,14 +211,9 @@ static inline bool mn_has_seqn(const struct msg_node *mn)
     return mn->flags & PBB_NF_SEQN;
 }
 
-static inline bool mn_has_prefix(const struct msg_node *mn)
+static inline bool mn_has_pref(const struct msg_node *mn)
 {
     return mn->flags & PBB_NF_PREF;
-}
-
-static inline bool mn_islocal(const struct msg_node *mn, uint32_t addr)
-{
-    return mn->addr == addr;
 }
 
 /* MANET message 5.2 */
@@ -207,7 +225,11 @@ struct pbb_msg {
     uint8_t addr_len;
     uint16_t size;
     // optional fields
-    uint8_t *orig_addr;
+    union {
+        uint8_t  orig_addr[16];
+        uint32_t orig_ip4;
+        uint16_t orig_ip6[8];
+    };
     uint8_t hop_limit;
     uint8_t hop_count;
     uint8_t seq_num;
@@ -239,7 +261,6 @@ static inline void pbb_msg_reset(struct pbb_msg *msg)
     msg->size = 0;
 
     // optional fields
-    msg->orig_addr = 0;
     msg->hop_limit = 0;
     msg->hop_count = 0;
     msg->seq_num = 0;
@@ -319,7 +340,7 @@ ssize_t pbb_msg_decode(struct pbb_msg *msg, void *mem, size_t len);
 int pkt_buf_decode_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr);
 int pkt_buf_decode_msg(struct pkt_buf *buf, struct pbb_msg *msg);
 
-const char *pbb_addr_tostr(uint32_t addr);
+const char *pbb_addr_tostr(size_t len, uint8_t addr[static len]);
 const char *ppb_type_tostr(uint32_t type);
 int ppb_msg_tostr(struct pbb_msg *msg, char *buf, size_t len);
 
