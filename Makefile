@@ -104,7 +104,7 @@ $(BUILD_DIR):
 # yamir
 # -----
 YAMIR_DIR  = yamir
-YAMIR_SRCS = $(YAMIR_DIR)/util.c $(YAMIR_DIR)/log.c $(YAMIR_DIR)/pbb.c $(YAMIR_DIR)/main.c
+YAMIR_SRCS = $(YAMIR_DIR)/util.c $(YAMIR_DIR)/timer.c $(YAMIR_DIR)/log.c $(YAMIR_DIR)/pbb.c $(YAMIR_DIR)/main.c
 YAMIR_OBJS = $(YAMIR_SRCS:$(YAMIR_DIR)/%.c=$(BUILD_DIR)/%.o)
 YAMIR_DEPS = $(YAMIR_OBJS:.o=.d)
 -include $(YAMIR_DEPS)

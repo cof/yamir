@@ -14,7 +14,6 @@
    suexec then drop privliges
     iptables -A PREROUTING -t nat -i eth0 -p tcp 
    --dport 843 -j REDIRECT --to-port 8430
-
     
    Notes
    ===== 
@@ -93,10 +92,11 @@
 #include <linux/rtnetlink.h>
 #include <unistd.h>
 
+#include "netlink.h"
 #include "util.h"
 #include "log.h"
 #include "list.h"
-#include "netlink.h"
+#include "timer.h"
 #include "pbb.h"
 
 #define YAMIR_MAXBUF 1024
@@ -127,6 +127,7 @@
 
 volatile sig_atomic_t keep_running = 0;
 
+// application state
 struct yamir_state {
     // config
     char if_name[IFNAMSIZ];
@@ -141,10 +142,10 @@ struct yamir_state {
     uint32_t local_addr;
     uint32_t bcast_addr;
     uint32_t mcast_addr;
-    // our netlink module
+    // our kernel module
     int kyamir_fd;
     struct sockaddr_nl yamir_addr;
-    // kernel rtnetlink module
+    // linux rtnetlink module
     int route_fd;
     struct sockaddr_nl route_addr;
     // lists
@@ -639,38 +640,40 @@ static int recv_dymo_reply(struct yamir_state *ys, struct pbb_msg *reply)
 }
 
 // multihop-capbable unicast address (todo add prefix/if mask)
-static int unicast_addr(uint32_t addr)
+static bool is_unicast(uint32_t addr)
 {
     uint32_t tmp_addr = ntohl(addr);
 
     // broadcast address 255.255.255.255
-    if (tmp_addr == 0xF0000000) return 0;
+    if (tmp_addr == 0xF0000000) return false;
 
     // class D multicast address 224.0.0.0 - 239.255.255.255 (fb=0xE0.0xEF)
-    if ((tmp_addr & 0xF0000000) == 0xE0000000) return 0;
+    if ((tmp_addr & 0xF0000000) == 0xE0000000) return false;
 
-    return 1;
+    return true;
 }
 
-static int inc_node_dist(struct msg_node *mn)
+// increment node distaince
+static bool inc_node_dist(struct msg_node *mn)
 {
     if (mn_has_dist(mn)) {
-        if (mn->dist >= 0xFFFF) return 0;
+        if (mn->dist >= 0xFFFF) return false;
         mn->dist++;
     }
 
-    return 1;
+    return true;
 }
 
-static int dec_hop_limit(struct pbb_msg *msg)
+// decrement hop limit
+static bool dec_hop_limit(struct pbb_msg *msg)
 {
     if (pbb_msg_has_hlim(msg)) {
-        if (msg->hop_limit == 0) return 0;
+        if (msg->hop_limit == 0) return false;
         msg->hop_limit--;
-        if (msg->hop_limit == 0) return 0;
+        if (msg->hop_limit == 0) return false;
     }
 
-    return 1;
+    return true;
 }
 
 // 5.5.3 rm message or data packet cannot be routed to addr
@@ -719,7 +722,7 @@ static int relay_rm(struct yamir_state *ys, struct pbb_msg *msg, struct recv_sta
 
     // replies or unicast requests always sent via next hop addr
     uint32_t dst_addr;
-    if (msg->type == DYMO_RREP || unicast_addr(rs->daddr)) {
+    if (msg->type == DYMO_RREP || is_unicast(rs->daddr)) {
         // need check if rm can be routed towards target
         struct msg_node *target = msg->target;
         struct dymo_route *dr = route_find(ys, target->ip4_addr);
@@ -801,7 +804,7 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rep, struct recv_
 // RERR handling page 28
 static int route_broken(struct yamir_state *ys, struct msg_node *mn, uint32_t sender)
 {
-    if (!unicast_addr(mn->ip4_addr)) return 0;
+    if (!is_unicast(mn->ip4_addr)) return 0;
 
     struct dymo_route *dr = route_find(ys, mn->ip4_addr);
     if (!dr) return 0;
@@ -1128,7 +1131,9 @@ static int dymo_process_mmsg(struct yamir_state *ys,
     struct pbb_hdr hdr;
 
     int ec = pkt_buf_decode_hdr(&buf, &hdr);
-    while (!ec && pkt_buf_avail(&buf)) {
+    if (ec) return ec;
+
+    while (pkt_buf_avail(&buf)) {
         struct pbb_msg msg;
         ec = pkt_buf_decode_msg(&buf, &msg);
         if (ec) continue;

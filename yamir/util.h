@@ -25,30 +25,6 @@ static inline const char *get_basename(const char *path)
     return base ? base + 1 : path;
 }
 
-/* timer api */
-struct timer {
-    void (*cb_fn) (void *cb_arg);
-    void *cb_arg;
-    int idx;
-    struct timeval when;
-};
-
-struct timerheap {
-    struct timer **data;
-    int size;
-    int used;
-};
-
-void timer_del(struct timer *t);
-struct timer *timer_add(void (*cb_fn)(void *cb_arg), 
-    void *cb_arg, struct timeval *timeout);
-struct timer *timer_add_wsec(void (*cb_fn)(void *cb_arg), 
-    void *cb_arg, time_t sec);
-void timer_process(int *wait_msec);
-
-int timer_init(void);
-void timer_deinit(void);
-
 /* hashmap api */
 struct inthash_entry {
     struct inthash_entry *next;
