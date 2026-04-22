@@ -27,7 +27,7 @@ struct timer_mgr {
     int num_timer;
     int num_fire;
     int free_head;
-    struct timer_slot slots[TIMER_MAXSLOT];
+    struct timer_slot slot[TIMER_MAXSLOT];
     struct timer_slot fire[TIMER_MAXSLOT];
     int heap[TIMER_MAXSLOT];
 };

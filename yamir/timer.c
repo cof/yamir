@@ -5,8 +5,8 @@
  *
  * Notes
  * ------
- * minium binary heap aka priortity queue
- * based on the classc barkley and lee usenix 88 paper
+ * Uses a minium binary heap aka priortity queue
+ * Based on the classc barkley and lee usenix 88 paper
  * A Heap-Based Callout Implementation to Meet Real-Time Needs
 */
 #include <stdint.h>
@@ -21,11 +21,10 @@
     (y) = _tmp; \
 } while(0) 
 
-
 static bool timer_greater(struct timer_mgr *tm, int t1, int t2)
 {
-    struct timer_slot *ts1 = &tm->slots[t1];
-    struct timer_slot *ts2 = &tm->slots[t2];
+    struct timer_slot *ts1 = &tm->slot[t1];
+    struct timer_slot *ts2 = &tm->slot[t2];
 
     return ts1->expiry > ts2->expiry;
 }
@@ -65,7 +64,7 @@ static void minheap_siftdown(struct timer_mgr *tm, int idx)
 
 static void slot_release(struct timer_mgr *tm, struct timer_slot *ts)
 {
-    int tid = ts - tm->slots;
+    int tid = ts - tm->slot;
 
     ts->hidx = tm->free_head;
     ts->flags = 0;
@@ -80,7 +79,7 @@ static int get_free_slot(struct timer_mgr *tm)
     int tid = tm->free_head;
 
     if (tid != -1) {
-        tm->free_head = tm->slots[tid].hidx;
+        tm->free_head = tm->slot[tid].hidx;
     }
 
     return tid;
@@ -102,10 +101,10 @@ int timer_init(struct timer_mgr *tm)
     tm->free_head = 0;
 
     for (int i= 0; i < TIMER_MAXSLOT - 1; i++) {
-        tm->slots[i].hidx = i + 1;
+        tm->slot[i].hidx = i + 1;
     }
 
-    tm->slots[TIMER_MAXSLOT - 1].hidx = -1;
+    tm->slot[TIMER_MAXSLOT - 1].hidx = -1;
 
     return 0;
 }
@@ -122,7 +121,7 @@ int timer_process(struct timer_mgr *tm, int wait_ms)
 
     while (tm->num_timer) {
         int tid = tm->heap[0];
-        ts = &tm->slots[tid];
+        ts = &tm->slot[tid];
         if (ts->expiry > now_ms) break;
         // copy expired timer
         tm->fire[tm->num_fire++] = *ts;
@@ -154,7 +153,7 @@ int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *ar
     int tid = get_free_slot(tm);
     if (tid == -1) return -1;
 
-    struct timer_slot *ts = &tm->slots[tid];
+    struct timer_slot *ts = &tm->slot[tid];
 
     ts->expiry = get_now_ms() + ms;
     ts->hidx   = tm->num_timer;
@@ -172,7 +171,7 @@ void timer_cancel(struct timer_mgr *tm, int tid)
 {
     if (tid < 0 || tid >= TIMER_MAXSLOT) return;
 
-    struct timer_slot *ts = &tm->slots[tid];
+    struct timer_slot *ts = &tm->slot[tid];
     int hidx = ts->hidx;
     if (hidx < 0) return;
 
