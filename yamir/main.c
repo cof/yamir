@@ -281,13 +281,14 @@ static const char *sockaddr_tostr(struct sockaddr_in *sa)
     size_t len = sizeof(bufs[0]);
     idx = (idx + 1) & 3;
 
+    char *ptr = buf;
     const char *str = inet_ntop(AF_INET, &sa->sin_addr, buf, len);
     if (!str) return "???";
 
-    size_t nw = strlen(str);
+    int nw = strlen(str);
     len -= nw;
-    buf += nw;
-    snprintf(buf, len, ":%d", ntohs(sa->sin_port));
+    ptr += nw;
+    snprintf(ptr, len, ":%d", ntohs(sa->sin_port));
 
     return buf;
 }
@@ -1267,7 +1268,7 @@ static int dymo_init(struct yamir_state *ys)
     ec = bind(ys->dymo_fd, (struct sockaddr *) sin, sizeof(*sin));
     if (ec == -1) return log_errno_rf("bind_dymo");
 
-    log_info("+", "Started dymo on if %s addr %s\n", ys->if_name, sockaddr_tostr(sin));
+    log_info("+", "Started dymo if=%s addr=%s", ys->if_name, sockaddr_tostr(sin));
 
     return 0;
 }
@@ -1277,7 +1278,7 @@ static int addattr_l(struct nlmsghdr *n, size_t maxlen, int type, void *data, in
 {
     int len = RTA_LENGTH(alen);
     if (NLMSG_ALIGN(n->nlmsg_len) + len > maxlen) {
-        return log_error_rf("addattr_l %d failed\n", type);
+        return log_error_rf("addattr_l %d failed", type);
     }
 
     struct rtattr *rta = (struct rtattr *) (((char *) n) + NLMSG_ALIGN (n->nlmsg_len));
@@ -1512,7 +1513,7 @@ static int netlink_init(struct yamir_state *ys)
     ec = bind(ys->route_fd, (struct sockaddr *) nl_addr, sizeof(*nl_addr));
     if (ec == -1) return log_errno_rf("bind netlink_route");
 
-    log_info("+", "netlink active kyamird=%d route=%d\n", ys->kyamir_fd, ys->route_fd);
+    log_info("+", "Started netlink kyamird_fd=%d route_fd=%d", ys->kyamir_fd, ys->route_fd);
 
     return 0;
 }

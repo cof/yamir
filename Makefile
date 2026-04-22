@@ -43,7 +43,7 @@ YAMIR_CFLAGS := -Wall \
 DEBUG_CFLAGS := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 
 CFLAGS  = -O2 $(YAMIR_CFLAGS)
-LDFLAGS =
+LDFLAGS = -static
 
 TOPDIR=$(shell pwd)
 TARGET ?= linux
@@ -51,7 +51,6 @@ TARGET ?= linux
 ifeq ($(TARGET), linux)
 	ARCH=$(shell uname -m)
 	KDIR=/lib/modules/$(shell uname -r)/build
-	#OBJDIR=build-$(TARGET)
 else ifeq ($(TARGET), samsungs2)
 	KDIR=/home/cy/wrk/android-device/samsungs2/kernel-src
 	ARCH=arm
@@ -80,7 +79,6 @@ else ifeq ($(TARGET), htcdesire)
 else
 $(error TARGET $(TARGET) unsupported)
 endif
-
 
 YAMIR  = yamird
 KYAMIR = kyamir
@@ -121,6 +119,7 @@ $(BUILD_DIR)/%.o: $(YAMIR_DIR)/%.c | $(BUILD_DIR)
 $(KYAMIR):
 	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC)
 
+
 # test-runner
 # -----------
 TEST_DIR  = tests
@@ -149,7 +148,7 @@ test: $(TEST_RUNNER)
 # tags file
 # ----------
 .PHONY: tags
-SOURCES = $(wildcard yamir/*.c yamir/*.h)
+SOURCES = $(wildcard yamir/*.c yamir/*.h include/*.h)
 tags: $(SOURCES)
 	@echo "Creating tags file"
 	$(Q)$(CTAGS) $(SOURCES)
