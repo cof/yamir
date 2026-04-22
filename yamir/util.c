@@ -342,13 +342,20 @@ struct inthash_table *inthash_table_create(int size)
     return table;
 }
 
-void util_init()
+int timer_init()
 {
+    if (heap) return 0;
+
     heap = timerheap_new();
+    if (!heap) return -1;
+
+    return 0;
 }
 
-void util_deinit(void)
+void timer_deinit(void)
 {
-    if (heap) timerheap_free(heap);
-
+    if (heap) {
+        timerheap_free(heap);
+        heap = NULL;
+    }
 }

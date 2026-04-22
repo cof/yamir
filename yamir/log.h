@@ -86,6 +86,7 @@ void log_argv(const char *what, int argc, char *argv[]);
 #define LOG_INFO  3
 #define LOG_DEBUG 4
 
+
 /*
  * macros : various msg-str and fmt-str macros
  * -------------------------------------------
@@ -128,9 +129,11 @@ void log_argv(const char *what, int argc, char *argv[]);
     (rc); \
 })
 
+#define LOG_FAIL -1
+
 #define log_cmd_err(cmd, opt, ...) ({ \
     _log_msg(cmd, 0, opt, 0, LOG_NONE, "ERROR", __VA_ARGS__); \
-    -1; \
+    LOG_FAIL; \
 })
 
 #define log_debug(...) \
@@ -147,7 +150,7 @@ void log_argv(const char *what, int argc, char *argv[]);
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
     }\
-    -1; \
+    LOG_FAIL; \
 })
 
 #define log_error_rc(rc, ...) ({ \
@@ -191,7 +194,7 @@ void log_argv(const char *what, int argc, char *argv[]);
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
     } \
-    -1; \
+    LOG_FAIL; \
 })
 
 #define log_errno_rc(rc, ...) ({ \
@@ -212,7 +215,7 @@ void log_argv(const char *what, int argc, char *argv[]);
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, ec, LOG_ERROR, NULL, __VA_ARGS__); \
     } \
-    -1; \
+    LOG_FAIL; \
 })
 
 #define fatal_error(...) \

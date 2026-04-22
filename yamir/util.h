@@ -46,6 +46,9 @@ struct timer *timer_add_wsec(void (*cb_fn)(void *cb_arg),
     void *cb_arg, time_t sec);
 void timer_process(int *wait_msec);
 
+int timer_init(void);
+void timer_deinit(void);
+
 /* hashmap api */
 struct inthash_entry {
     struct inthash_entry *next;
@@ -64,8 +67,5 @@ extern void inthash_table_add(struct inthash_table *table, uint32_t key, void *d
 extern void inthash_table_free(struct inthash_table *table);
 extern struct inthash_table *inthash_table_create(int size);
 
-
-void util_init(void);
-void util_deinit(void);
 
 #endif
