@@ -1,260 +1,192 @@
 /*
+ * A simple timer API
+ * ------------------
+ * See timer.h for API description.
  *
- */
-#include <stdio.h>
+ * Notes
+ * ------
+ * minium binary heap aka priortity queue
+ * based on the classc barkley and lee usenix 88 paper
+ * A Heap-Based Callout Implementation to Meet Real-Time Needs
+*/
 #include <stdint.h>
-#include <stdlib.h>
-
-#include <sys/time.h>
-#include <sys/types.h>
+#include <stdbool.h>
+#include <time.h>
 
 #include "timer.h"
 
-struct timerheap {
-    struct timer **data;
-    int size;
-    int used;
-};
+#define swap(x,y) do { \
+    __typeof__(x) _tmp = (x); \
+    (x) = (y); \
+    (y) = _tmp; \
+} while(0) 
 
-static struct timerheap *heap = NULL;
 
-/* minium binary heap aka priortity queue
-   based on the classc barkley and lee usenix 88 paper
-   A Heap-Based Callout Implementation to Meet Real-Time Needs
-*/
-static struct timerheap *timerheap_new(void)
+static bool timer_greater(struct timer_mgr *tm, int t1, int t2)
 {
-    struct timerheap *th;
+    struct timer_slot *ts1 = &tm->slots[t1];
+    struct timer_slot *ts2 = &tm->slots[t2];
 
-    th = malloc(sizeof(*th));
-
-    th->data = NULL;
-    th->size = 0;
-    th->used = 0;
-
-    return th;
+    return ts1->expiry > ts2->expiry;
 }
 
-static void timerheap_free(struct timerheap *th)
+//  sift up or swim  
+static void minheap_siftup(struct timer_mgr *tm, int idx)
 {
-    if (th->data) {
-        free(th->data);
-        th->data = NULL;
+    int parent;
+
+    parent = (idx - 1) / 2;
+
+    while (idx > 0 && timer_greater(tm, tm->heap[parent], tm->heap[idx])) {
+        swap(tm->heap[parent], tm->heap[idx]);
+        idx = parent;
+        parent = (idx - 1) / 2;
     }
-
-    free(th);
 }
 
-static int get_left(int idx)
+// sift down or sink
+static void minheap_siftdown(struct timer_mgr *tm, int idx)
 {
-    return 2 * idx + 1;
-}
+    if (tm->num_timer < 2) return;
 
-static int get_right(int idx)
-{
-    return 2 * idx + 2;
-}
-
-static int get_parent(int idx)
-{
-    return (idx - 1) / 2;
-}
-
-static int timer_greater(struct timer *a, struct timer *b)
-{
-    return timercmp(&a->when, &b->when, >);
-}
-
-
-// min heap
-static void sift_up(struct timerheap *th, int idx)
-{
-    if (idx > 0) {
-        int pidx = get_parent(idx);
-        if (timer_greater(th->data[pidx], th->data[idx])) {
-            // swap
-            struct timer *tmp = th->data[pidx];
-            th->data[pidx] = th->data[idx];
-            th->data[idx] = tmp;
-            // update positions
-            th->data[pidx]->idx = pidx;
-            th->data[idx]->idx = idx;
-            sift_up(th, pidx);
+    int child = idx;
+    while (idx == child && idx <= (tm->num_timer - 2) / 2) {
+        // choose lesser left|right child
+        child = 2 * idx + 1;
+        if (child + 1 < tm->num_timer && timer_greater(tm, tm->heap[child], tm->heap[child+1])) {
+            child++;
+        }
+        if (timer_greater(tm, tm->heap[idx], tm->heap[child])) {
+            swap(tm->heap[child], tm->heap[idx]);
+            idx = child;
         }
     }
 }
 
-static void timerheap_push(struct timerheap *th, struct timer *value)
+static void slot_release(struct timer_mgr *tm, struct timer_slot *ts)
 {
-    // resize check
-    if (th->used == th->size) {
-        int size = th->used + 128;
-        struct timer **data = realloc(th->data, sizeof(struct timer *) * size);
-        if (!data) {
-            fprintf(stderr, "malloc(%ld)", sizeof(struct timer *) * size);
-            abort();
-        }
-        th->size = size;
-        th->data = data;
-    }
+    int tid = ts - tm->slots;
 
-    th->data[th->used] = value;
-    th->data[th->used]->idx = th->used;
-    sift_up(th, th->used);
+    ts->hidx = tm->free_head;
+    ts->flags = 0;
+    ts->cb = NULL;
+    ts->arg = NULL;
 
-    th->used++;
+    tm->free_head = tid;
 }
 
-static void sift_down(struct timerheap *th, int idx)
+static int get_free_slot(struct timer_mgr *tm)
 {
-    int lidx = get_left(idx);
-    int ridx = get_right(idx);
-    int midx;
+    int tid = tm->free_head;
 
-    if (ridx >= th->used) {
-        if (lidx >= th->used) {
-            return;
-        }
-        midx = lidx;
-    }
-    else {
-        midx = timer_greater(th->data[lidx], th->data[ridx])
-           ? ridx
-           : lidx;
+    if (tid != -1) {
+        tm->free_head = tm->slots[tid].hidx;
     }
 
-    if (timer_greater(th->data[idx], th->data[midx])) {
-        // swap
-        struct timer *tmp = th->data[idx];
-        th->data[idx] = th->data[midx];
-        th->data[midx] = tmp;
-        // update positions
-        th->data[idx]->idx = idx;
-        th->data[midx]->idx = midx;
-        sift_down(th,midx);
-    }
+    return tid;
 }
 
-static void timerheap_remove(struct timerheap *th, struct timer *value)
+static inline uint64_t get_now_ms(void)
 {
-    int idx = value->idx;
+    struct timespec ts;
 
-    if (idx < 0 || idx >= th->used) {
-        return;
-    }
+    int rc = clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (rc == -1) return (uint64_t) -1;
 
-    // replace item with last elem
-    --th->used;
-    th->data[idx] = th->data[th->used];
-    th->data[idx]->idx = idx;
-
-    if (timer_greater(th->data[idx], value)) {
-        sift_down(th, idx);
-    }
-    else {
-        sift_up(th, idx);
-    }
-    
-    value->idx = -1;
+    // convert to msec
+    return ts.tv_sec * 1000 + ts.tv_nsec / 1000;
 }
 
-static struct timer *timerheap_pop(struct timerheap *th)
+int timer_init(struct timer_mgr *tm)
 {
-    struct timer *t;
+    tm->free_head = 0;
 
-    if (th->used > 0) {
-        --th->used;
-        t = th->data[0];
-        th->data[0] = th->data[th->used];
-        th->data[0]->idx = 0;
-        if (th->used > 0) {
-            sift_down(th,0);
-        }
-        t->idx = -1;
-    }
-    else {
-        t = NULL;
+    for (int i= 0; i < TIMER_MAXSLOT - 1; i++) {
+        tm->slots[i].hidx = i + 1;
     }
 
-    return t;
-}
-
-
-static struct timer *timerheap_min(struct timerheap *th)
-{
-    return (th->used > 0) ? th->data[0] : NULL;
-}
-
-
-int timer_init()
-{
-    if (heap) return 0;
-
-    heap = timerheap_new();
-    if (!heap) return -1;
+    tm->slots[TIMER_MAXSLOT - 1].hidx = -1;
 
     return 0;
 }
 
-void timer_deinit(void)
+void timer_deinit(struct timer_mgr *tm)
 {
-    if (heap) {
-        timerheap_free(heap);
-        heap = NULL;
+    tm->num_timer = 0;
+}
+
+int timer_process(struct timer_mgr *tm, int wait_ms)
+{
+    uint64_t now_ms = get_now_ms();
+    struct timer_slot *ts = NULL;
+
+    while (tm->num_timer) {
+        int tid = tm->heap[0];
+        ts = &tm->slots[tid];
+        if (ts->expiry > now_ms) break;
+        // copy expired timer
+        tm->fire[tm->num_fire++] = *ts;
+        // min_heappop:
+        tm->heap[0] = tm->heap[--tm->num_timer];
+        minheap_siftdown(tm, 0);
+        slot_release(tm, ts);
     }
+
+    // update wait
+    if (ts) wait_ms = ts->expiry - now_ms;
+
+    // fire pending timers
+    int n = tm->num_fire;
+    tm->num_fire = 0;
+    for (int i = 0; i < n; i++) {
+        if (tm->fire[i].cb) {
+            tm->fire[i].cb(tm->fire[i].arg);
+            tm->fire[i].cb = NULL;
+        }
+        tm->fire[i].arg = NULL;
+    }
+
+    return wait_ms;
 }
 
-void timer_process(int *wait_msec)
+int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *arg)
 {
-    struct timeval now;
-    struct timer *t;
+    int tid = get_free_slot(tm);
+    if (tid == -1) return -1;
 
-    gettimeofday(&now, NULL);
+    struct timer_slot *ts = &tm->slots[tid];
 
-    while (1) {
-        t = timerheap_min(heap);
-        if (!t) break;
-        if (timercmp(&t->when, &now, >)) break;
-        timerheap_pop(heap);
-        t->cb_fn(t->cb_arg);
-        free(t);
-    } 
+    ts->expiry = get_now_ms() + ms;
+    ts->hidx   = tm->num_timer;
+    ts->flags  = TSF_ACTIVE;
+    ts->cb  = cb;
+    ts->arg = arg;
 
-    struct timeval tv = { .tv_sec = 5 };
-    if (t) timersub(&t->when, &now, &tv);
-    *wait_msec = tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+    tm->heap[tm->num_timer++] = tid;
+    minheap_siftup(tm, tm->num_timer - 1);
+
+    return tid;
 }
 
-struct timer *timer_add(void (*cb_fn)(void *cb_arg), void *cb_arg, struct timeval *timeout)
+void timer_cancel(struct timer_mgr *tm, int tid)
 {
-    struct timer *t;
-    struct timeval now;
+    if (tid < 0 || tid >= TIMER_MAXSLOT) return;
 
-    t = malloc(sizeof(*t));
+    struct timer_slot *ts = &tm->slots[tid];
+    int hidx = ts->hidx;
+    if (hidx < 0) return;
 
-    t->cb_fn = cb_fn;
-    t->cb_arg = cb_arg;
+    int last_hidx = --tm->num_timer;
 
-    gettimeofday(&now, NULL);
-    timeradd(&now, timeout, &t->when);
+    if (hidx != last_hidx) {
+        swap(tm->heap[hidx], tm->heap[last_hidx]);
+        if (timer_greater(tm, hidx, last_hidx)) {
+            minheap_siftdown(tm, hidx);
+        }
+        else {
+            minheap_siftup(tm, hidx);
+        }
+    }
 
-    timerheap_push(heap, t);
-
-    return t;
-}
-
-struct timer *timer_add_wsec(void (*cb_fn)(void *cb_arg), void *cb_arg, time_t sec)
-{
-    struct timeval wait;
-
-    wait.tv_sec = sec;
-    wait.tv_usec = 0;
-
-    return timer_add(cb_fn, cb_arg, &wait);
-}
-
-void timer_del(struct timer *t)
-{
-    timerheap_remove(heap, t);
-    free(t);
+    slot_release(tm, ts);
 }

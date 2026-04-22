@@ -103,11 +103,10 @@
 #define YAMIR_MSGSIZE NLMSG_SPACE(sizeof(struct yamir_msg))
 #define YAMIR_MAXCTRL CMSG_SPACE(sizeof(struct in_pktinfo))
 #define YAMIR_MAXPKT 10
+#define YAMIR_MAXTIMER 128
 
-#define RBUF_SIZE 1024 * 8
-#define WBUF_SIZE 1024 * 8
+#define WBUF_SIZE (8 * 1024)
 #define ADDR_STRLEN INET_ADDRSTRLEN + sizeof(":65535")
-
 #define IPV4_ADDR(a,b,c,d) (uint32_t) (a << 24 | b << 16 | c << 8 | d)
 
 // rfc5498 link local multicast address 224.0.0.109
@@ -117,13 +116,14 @@
 // default settings from draft-ietf-manet-dymo-21.txt
 #define DISCOVERY_ATTEMPTS_MAX 3
 
-#define ROUTE_TIMEOUT 5
-#define ROUTE_AGE_MIN_TIMEOUT 1
-#define ROUTE_SEQNUM_AGE_MAX_TIMEOUT 60
+// all DYMO timeouts in secs mapped to ms
+#define ROUTE_TIMEOUT (5 * 1000)
+#define ROUTE_AGE_MIN_TIMEOUT (1 * 1000)
+#define ROUTE_SEQNUM_AGE_MAX_TIMEOUT (60 * 1000)
 #define ROUTE_USED_TIMEOUT ROUTE_TIMEOUT
 #define ROUTE_DELETE_TIMEOUT (2 * ROUTE_TIMEOUT)
-#define ROUTE_RREQ_WAIT_TIME 2
-#define UNICAST_MESSAGE_SENT_TIMEOUT 1
+#define ROUTE_RREQ_WAIT_TIME (2 * 1000)
+#define UNICAST_MESSAGE_SENT_TIMEOUT (1 * 1000)
 
 volatile sig_atomic_t keep_running = 0;
 
@@ -134,25 +134,33 @@ struct yamir_state {
     int port;
     int daemonize;
     int if_index;
+
+    // dymo udp
+    int dymo_fd;
     uint32_t node_did;
     uint16_t own_seqnum;
-    // dymo
-    int dymo_fd;
     struct sockaddr_in if_addr;
     uint32_t local_addr;
     uint32_t bcast_addr;
     uint32_t mcast_addr;
+
     // our kernel module
     int kyamir_fd;
     struct sockaddr_nl yamir_addr;
+
     // linux rtnetlink module
     int route_fd;
     struct sockaddr_nl route_addr;
+
     // lists
     struct list_elem requests;
     struct list_elem free_reqs;
     struct list_elem routes;
     struct list_elem free_routes;
+
+    // timers
+    struct timer_mgr timers;
+    
     // recv buffers
     struct sockaddr_storage addr_pool[YAMIR_MAXPKT];
     struct mmsghdr msgs[YAMIR_MAXPKT];
@@ -167,10 +175,15 @@ struct dymo_req {
     uint32_t addr;
     int ifindex;
     struct timeval timestamp;
-    struct timer *timer;
+    int timer;
     time_t wait_time;
     int tries;
 };
+
+// DYMO message types
+#define DYMO_RREQ 10
+#define DYMO_RREP 11
+#define DYMO_RERR 12
 
 // 4.1 (addr are in network byte order)
 struct dymo_route {
@@ -184,10 +197,11 @@ struct dymo_route {
     uint32_t flags;
     uint32_t dist;
     struct timeval timestamp;
-    struct timer *age_timer;
-    struct timer *seqnum_timer;
-    struct timer *used_timer;
-    struct timer *delete_timer;
+    // timers
+    int age_timer;
+    int seqnum_timer;
+    int used_timer;
+    int del_timer;
 };
 
 // dymo route flags
@@ -242,19 +256,9 @@ static const char *yamir_type_tostr(uint32_t type)
     return type < ARR_LEN(names) ? names[type] : "!UNKNOWN";
 }
 
-// N.B all addr are stored in network byte order
-
-// message types
-#define DYMO_RREQ 10
-#define DYMO_RREP 11
-#define DYMO_RERR 12
 
 #define RESPONSIBLE_ADDRESSES 0
 #define MSG_HOPLIMIT 10
-
-// ipv4= 4, ipv6=16
-#define MAX_ADDR_LEN 4
-
 
 struct recv_state {
     uint32_t saddr;
@@ -355,76 +359,86 @@ static void delete_timeout_cb(void *arg)
 {
     struct dymo_route *dr = arg;
 
-    dr->delete_timer = NULL;
+    dr->del_timer = -1;
     route_delete(dr);
 }
 
 static inline void stop_delete_timer(struct dymo_route *dr)
 {
-    if (!dr->delete_timer) return;
+    if (dr->del_timer == -1) return;
 
-    timer_del(dr->delete_timer);
-    dr->delete_timer = NULL;
+    struct yamir_state *ys = dr->parent;
+
+    timer_cancel(&ys->timers, dr->del_timer);
+    dr->del_timer = -1;
 }
 
 static void start_delete_timer(struct dymo_route *dr)
 {
-    if (dr->delete_timer) return;
+    if (dr->del_timer != -1) return;
+
     log_debug("Starting delete timer");
 
-    dr->delete_timer = timer_add_wsec(
+    struct yamir_state *ys = dr->parent;
+
+    dr->del_timer = timer_add(&ys->timers, 
+        ROUTE_DELETE_TIMEOUT,
         delete_timeout_cb,
-        dr, 
-        ROUTE_DELETE_TIMEOUT);
+        dr);
 }
 
 // spec says its safe to delete after age timer expired
 // but it make sense to allow start a delete timer
 // similar to a route used logic
-static void age_timeout_cb(void *cb_arg)
+static void age_timeout_cb(void *arg)
 {
-    struct dymo_route *dr = cb_arg;
+    struct dymo_route *dr = arg;
 
-    dr->age_timer = NULL;
+    dr->age_timer = -1;
     start_delete_timer(dr);
 }
 
 static inline void stop_age_timer(struct dymo_route *dr)
 {
-    if (!dr->age_timer) return;
+    if (dr->age_timer == -1) return;
 
-    timer_del(dr->age_timer);
-    dr->age_timer = NULL;
+    struct yamir_state *ys = dr->parent;
+    timer_cancel(&ys->timers, dr->age_timer);
+    dr->age_timer = -1;
 }
 
-static void seqnum_timeout_cb(void *cb_arg)
+static void seqnum_timeout_cb(void *arg)
 {
-    struct dymo_route *dr = cb_arg;
+    struct dymo_route *dr = arg;
 
-    dr->seqnum_timer = NULL;
+    dr->seqnum_timer = -1;
     dr->seqnum = 0;
 }
 
 static inline void stop_seqnum_timer(struct dymo_route *dr)
 {
-    if (!dr->seqnum_timer) return;
-    timer_del(dr->seqnum_timer);
-    dr->seqnum_timer = NULL;
+    if (dr->seqnum_timer == -1) return;
+
+    struct yamir_state *ys = dr->parent;
+    timer_cancel(&ys->timers, dr->seqnum_timer);
+    dr->seqnum_timer = -1;
 }
 
 static inline void stop_used_timer(struct dymo_route *dr)
 {
-    if (!dr->used_timer) return;
-    timer_del(dr->used_timer);
-    dr->used_timer = NULL;
+    if (dr->used_timer == -1) return;
+
+    struct yamir_state *ys = dr->parent;
+    timer_cancel(&ys->timers, dr->used_timer);
+    dr->used_timer = -1 ;
 }
 
 // 5.2.3.3.
-static void used_timeout_cb(void *cb_arg)
+static void used_timeout_cb(void *arg)
 {
-    struct dymo_route *dr = cb_arg;
+    struct dymo_route *dr = arg;
 
-    dr->used_timer = NULL;
+    dr->used_timer = -1;
     start_delete_timer(dr);
 }
 
@@ -435,7 +449,6 @@ static void stop_all_timers(struct dymo_route *dr)
     stop_used_timer(dr);
     stop_age_timer(dr);
 }
-
 
 static void print_route(const char *prefix, struct dymo_route *dr)
 {
@@ -550,8 +563,8 @@ static int route_update(struct yamir_state *ys,
     }
 
     // restart route updated timers
-    dr->age_timer = timer_add_wsec(age_timeout_cb, dr, ROUTE_AGE_MIN_TIMEOUT);
-    dr->seqnum_timer = timer_add_wsec(seqnum_timeout_cb, dr, ROUTE_SEQNUM_AGE_MAX_TIMEOUT);
+    dr->age_timer = timer_add(&ys->timers, ROUTE_AGE_MIN_TIMEOUT, age_timeout_cb, dr);
+    dr->seqnum_timer = timer_add(&ys->timers, ROUTE_SEQNUM_AGE_MAX_TIMEOUT, seqnum_timeout_cb, dr);
 
     // add route forwarding
     dr->flags |= DRF_ADD_PENDING;
@@ -884,28 +897,28 @@ static struct dymo_req *req_create(struct yamir_state *s)
 
 static void dymo_req_free(struct dymo_req *req)
 {
-    struct yamir_state *s = req->parent;
+    struct yamir_state *ys = req->parent;
 
-    if (!s) {
+    if (!ys) {
         free(req);
         return;
     }
 
-    list_append(&s->free_reqs, &req->node);
+    list_append(&ys->free_reqs, &req->node);
 }
 
-static struct dymo_req *find_req(struct yamir_state *s, uint32_t addr)
+static struct dymo_req *find_req(struct yamir_state *ys, uint32_t addr)
 {
     struct dymo_req *req;
 
-    list_fornext_entry(&s->requests, req, node) {
+    list_fornext_entry(&ys->requests, req, node) {
         if (req->addr == addr) return req;
     }
 
     return NULL; 
 }
 
-static void send_dymo_req(struct yamir_state *s,
+static void send_dymo_req(struct yamir_state *ys,
     uint32_t addr, uint32_t seqnum, uint32_t hop_count)
 {
     struct pbb_msg req;
@@ -918,7 +931,7 @@ static void send_dymo_req(struct yamir_state *s,
     req.flags |= PBB_MF_HLIM;
     req.addr_len = 3;
 
-    yamir_inc_seqnum(s);
+    yamir_inc_seqnum(ys);
 
     // add target
     struct msg_node target = { 0 };
@@ -935,9 +948,9 @@ static void send_dymo_req(struct yamir_state *s,
 
     // add origin
     struct msg_node origin = { 0 };
-    origin.ip4_addr = s->local_addr;
+    origin.ip4_addr = ys->local_addr;
     origin.flags |= PBB_NF_SEQN;
-    origin.seqnum = s->own_seqnum;
+    origin.seqnum = ys->own_seqnum;
     req.origin = pbb_msg_add_node(&req, &origin);
 
     // multicast request
@@ -946,19 +959,20 @@ static void send_dymo_req(struct yamir_state *s,
         addr_tostr(origin.ip4_addr),
         origin.seqnum);
 
-    send_dymo_msg(s, &req, s->mcast_addr);
+    send_dymo_msg(ys, &req, ys->mcast_addr);
 }
 
-static void dymo_req_timeout(void *cb_arg);
+static void dymo_req_timeout(void *arg);
 
 static void dymo_req_send(struct dymo_req *req)
 {
-    struct yamir_state *s = req->parent;
+    struct yamir_state *ys = req->parent;
 
-    // have we info about the target
-    struct dymo_route *route = route_find(s, req->addr);
     uint32_t seqnum, hop_count;
+
+    struct dymo_route *route = route_find(ys, req->addr);
     if (route) {
+        // have info about the target
         seqnum = route->seqnum;
         hop_count = route->dist;
     }
@@ -974,15 +988,15 @@ static void dymo_req_send(struct dymo_req *req)
         req->wait_time);
 
     // try again
-    req->timer = timer_add_wsec(dymo_req_timeout, req, req->wait_time);
-    send_dymo_req(s, req->addr, seqnum, hop_count);
+    req->timer = timer_add(&ys->timers, req->wait_time, dymo_req_timeout, req);
+    send_dymo_req(ys, req->addr, seqnum, hop_count);
 }
 
-static void dymo_req_timeout(void *cb_arg) 
+static void dymo_req_timeout(void *arg) 
 {
-    struct dymo_req *req = cb_arg;
+    struct dymo_req *req = arg;
 
-    req->timer = NULL;
+    req->timer = -1;
 
     log_debug("RREQ %s timeout %d/%d", addr_tostr(req->addr), req->tries, DISCOVERY_ATTEMPTS_MAX);
 
@@ -1040,7 +1054,7 @@ static void route_inuse(struct yamir_state *ys, uint32_t addr, int ifidx)
     stop_age_timer(dr);
 
     // restart used timer
-    dr->used_timer = timer_add_wsec(used_timeout_cb, dr, ROUTE_USED_TIMEOUT);
+    dr->used_timer = timer_add(&ys->timers, ROUTE_USED_TIMEOUT, used_timeout_cb, dr);
 }
 
 // section 5.5 a data packet to be forwarded has no route
@@ -1048,8 +1062,8 @@ static void route_err(struct yamir_state *ys, uint32_t addr, int ifindex)
 {
     log_debug("%s:%d", addr_tostr(addr), ifindex);
 
-    struct dymo_route *dr = route_find(ys, addr);
     int seqnum;
+    struct dymo_route *dr = route_find(ys, addr);
 
     if (dr) {
         if (!dr_isbroken(dr)) {
@@ -1170,13 +1184,15 @@ static void dymo_req_done(struct dymo_req *req, int reason)
 {
     list_remove(&req->node);
 
-    if (req->timer) {
-        timer_del(req->timer);
-        req->timer = NULL;
+    struct yamir_state *ys = req->parent;
+
+    if (req->timer != -1) {
+        if (ys) timer_cancel(&ys->timers, req->timer);
+        req->timer = -1;
     }
 
     // update_route takes care of kernel routing
-    if (reason != YAMIR_ROUTE_ADD) {
+    if (ys && reason != YAMIR_ROUTE_ADD) {
         kyamir_send(req->parent, reason, req->addr, req->ifindex);
     }
 
@@ -1613,7 +1629,7 @@ int main(int argc, char *argv[])
 
     if (!(ys = yamir_create()))   { ec = 1; goto done; };
     if (get_opts(ys, argc, argv)) { ec = 2; goto done; };
-    if (timer_init())             { ec = 3; goto done; };
+    if (timer_init(&ys->timers))  { ec = 3; goto done; };
     if (setup_signals())          { ec = 4; goto done; };
     if (setup_daemon(ys))         { ec = 5; goto done; };
     if (dymo_init(ys))            { ec = 6; goto done; };
@@ -1625,10 +1641,10 @@ int main(int argc, char *argv[])
         { .fd = ys->route_fd,  .events = POLLIN },
     };
     int mask = POLLIN | POLLHUP | POLLERR;
-    int wait_ms;
+    int wait_ms = -1;
 
     while (keep_running) {
-        timer_process(&wait_ms);
+        wait_ms = timer_process(&ys->timers, wait_ms);
         int rc = poll(fds, ARR_LEN(fds), wait_ms); 
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;
