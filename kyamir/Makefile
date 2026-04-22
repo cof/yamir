@@ -10,13 +10,13 @@
 #
 
 ifneq ($(KERNELRELEASE),)
-	obj-m = kyamir.o
-	ccflags-y += -I$(src)/../include
+  obj-m = kyamir.o
+  ccflags-y += -I$(src)/../include
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
 else
-    KERNELDIR ?= /lib/modules/$(shell uname -r)/build
-    PWD  := $(shell pwd)
+  KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+  PWD := $(shell pwd)
 
 all:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
