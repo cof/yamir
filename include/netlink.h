@@ -14,6 +14,9 @@
 #define YAMIR_ROUTE_INUSE 1
 #define YAMIR_ROUTE_ERR 2
 
+// rtm_protocol - See /usr/include/linux/rtnetlink.h
+#define YAMIR_RTNETLINK 30
+
 // message we send to kernel
 #define YAMIR_ROUTE_NOTFOUND 3
 #define YAMIR_ROUTE_ADD 4

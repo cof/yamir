@@ -99,8 +99,6 @@
 #include "netlink.h"
 #include "pbb.h"
 
-#define YAMIR_RTNETLINK 30
-
 #define YAMIR_MAXBUF 1024
 #define YAMIR_MSGSIZE NLMSG_SPACE(sizeof(struct yamir_msg))
 #define YAMIR_MAXCTRL CMSG_SPACE(sizeof(struct in_pktinfo))
@@ -1365,6 +1363,7 @@ static int kyamir_recv(struct yamir_state *ys)
 
 static void route_process_mmsg(struct yamir_state *ys, struct mmsghdr *msg)
 {
+    // TODO convert route update to dymo_route
     return;
 }
 
