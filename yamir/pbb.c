@@ -807,7 +807,7 @@ static bool compress_addr(struct pbb_ablk *ablk, struct msg_node *mn)
         // find common head
         uint8_t addr[16];
         memcpy(addr, &mn->addr, ablk->addr_len);
-        log_debug("%d.%d.%d.%d\n", addr[0], addr[1], addr[2], addr[3]);
+        log_debug("%d.%d.%d.%d", addr[0], addr[1], addr[2], addr[3]);
         int head_len = ablk->head_len;
         while (head_len > 0) {
             if (memcmp(ablk->head, addr, head_len) == 0) break;

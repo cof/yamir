@@ -1,0 +1,55 @@
+#cloud-config
+hostname: {{VM_NAME}}
+datasource_list: [ NoCloud ]
+
+packages:
+  - util-linux
+  - alpine-sdk
+  - libcap
+  - tcpdump
+  - linux-firmware-rtlwifi
+  - wireless-regdb
+  - git
+  - wireless-tools
+  - bridge-utils
+
+passwd:
+  list: |
+    root:alpine
+    alpine:alpine
+  expire: False
+
+ssh_pwauth: true
+
+# XXX alpine is ignore this
+write_files:
+  - path: /etc/ssh/sshd_config.d/00-force-passwords.conf
+    permissions: '0600'
+    content: |
+      PasswordAuthentication yes
+
+users:
+  - name: alpine
+    lock_passwd: false
+    ssh_authorized_keys:
+      - "{{SSH_PUBLIC_KEY}}"
+
+runcmd:
+  - echo "alpine:alpine" | chpasswd
+  - chmod g-s /home/alpine
+  - echo 'alias ll="ls -l"' >> /home/alpine/.profile
+  - chown alpine:alpine /home/alpine/.profile
+  - truncate -s 0 /etc/motd
+  - ln -sf /usr/bin/doas /usr/bin/sudo
+  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories
+  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
+  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
+  - apk add --update linux-openpax linux-openpax-dev
+  - |
+    KVER=$(ls /lib/modules | grep openpax | head -n1)
+    mkinitfs -k $KVER -o /boot/initramfs-openpax
+    if [ -f "/boot/initramfs-openpax" ]; then
+      sed -i 's/default=virt/default=openpax/' /etc/update-extlinux.conf
+      update-extlinux
+    fi
+

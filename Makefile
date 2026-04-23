@@ -1,30 +1,21 @@
 #
 # Yet Another Manet IP Router (YAMIR)
 # 
-# yamird - user-space router
-# kyamir- kernel-space module
-# test_runner - test runner
+# yamird : user-space router
+# kyamir : kernel-space module
+# test_runner : test runner
 #
+
+YAMIR  = yamird
+KYAMIR_DIR = kyamir
+BUILD_DIR = build
 
 CC = gcc
 LD = gcc
 CTAGS = ctags
+MAKEFLAGS += --no-print-directory
 
-# verbosity - aka Kbuild/HAProxy style
-# -----------------------------------
-V ?= 0
-Q = @
-ifeq ($V,1)
-Q=
-endif
-
-ifeq ($(V),1)
-cmd_CC  = $(CC)
-cmd_LD  = $(CC)
-else
-cmd_CC   = $(Q)echo "  CC    $@";$(CC)
-cmd_LD   = $(Q)echo "  LD    $@";$(CC)
-endif
+include scripts/verbose.mk
 
 # compiler flags
 # --------------
@@ -41,7 +32,6 @@ YAMIR_CFLAGS := -Wall \
 	$(CPP_FLAGS) $(GCC_DEPS)
 
 DEBUG_CFLAGS := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
-
 CFLAGS  = -O2 $(YAMIR_CFLAGS)
 LDFLAGS = -static
 
@@ -80,14 +70,11 @@ else
 $(error TARGET $(TARGET) unsupported)
 endif
 
-YAMIR  = yamird
-KYAMIR = kyamir
-BUILD_DIR = build
 
 # default target
 # --------------
 .PHONY: all
-all : $(YAMIR) $(KYAMIR)
+all : $(YAMIR) kyamir
 
 # debug build
 # -----------
@@ -116,9 +103,8 @@ $(BUILD_DIR)/%.o: $(YAMIR_DIR)/%.c | $(BUILD_DIR)
 # kyamir
 # ------
 .PHONY: kyamir
-$(KYAMIR):
-	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC)
-
+$(KYAMIR_DIR):
+	$(MAKE) -C $(KYAMIR_DIR) KERNELDIR=$(KDIR) KCC=$(CC)
 
 # test-runner
 # -----------
@@ -144,6 +130,26 @@ TEST_FILES = tests/rfc5444_core.txt
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER) $(TEST_FILES)
 
+# VM for testing kyamir
+# -------------------
+VM_NAME = test-yamir
+VM_RESIZE = 1G
+include scripts/build_vm.mk
+build-vm: vm-create
+.PHONY: test-kyamir
+test-kyamir: $(YAMIR) build-vm
+	$(Q)echo "[+] Running $@"; \
+	echo "[Installing files]"; \
+	VM_IP=$$($(VM_GET_IP)); \
+	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
+	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
+	echo " => Copying $(KYAMIR_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
+	scp -q $(VM_SSH_OPTS) -r $(KYAMIR_DIR) include yamird $$VM_SSH_ADDR:$(VM_HOME);  \
+	echo " => Building $(KYAMIR_DIR)"; \
+	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "cd kyamir; make"; \
+	echo " => Setting cap $(YAMIR)"; \
+	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "doas setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep $(YAMIR)"; \
+	echo "$@ complete."
 
 # tags file
 # ----------
@@ -158,4 +164,4 @@ tags: $(SOURCES)
 .PHONY: clean
 clean: 
 	rm -fr $(BUILD_DIR) $(YAMIR) $(TEST_RUNNER)
-	$(MAKE) -C $(KYAMIR) KERNELDIR=$(KDIR) KCC=$(CC) clean
+	$(MAKE) -C $(KYAMIR_DIR) KERNELDIR=$(KDIR) KCC=$(CC) clean

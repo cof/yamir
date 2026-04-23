@@ -24,6 +24,7 @@ struct timer_slot {
 #define TSF_ACTIVE  1
 
 struct timer_mgr {
+    uint64_t now_ms;
     int num_timer;
     int num_fire;
     int free_head;
@@ -34,7 +35,7 @@ struct timer_mgr {
 
 int timer_init(struct timer_mgr *tm);
 void timer_deinit(struct timer_mgr *tm);
-int timer_process(struct timer_mgr *tm, int wait_ms);
+int timer_check(struct timer_mgr *tm);
 
 int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *arg);
 void timer_cancel(struct timer_mgr *tm, int tid);

@@ -62,7 +62,9 @@
 #ifndef _LOG_H_
 #define _LOG_H_
 
+#include <stdio.h>
 #include <errno.h>
+
 
 extern int log_level;
 

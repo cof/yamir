@@ -23,7 +23,7 @@
    cap_net_raw          - uses SO_BINDTODEVICE
    cap_net_admin        - uses netlink multlicast nl_groups != 0
     
-   sudo setcap cap_net_bind_service,cap_net_raw=+ep some-binary
+   sudo setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep yamird
 
    Okay 
     netlink_set_nonroot(NETLINK_YAMIR, NL_NONROOT_RECV);
@@ -242,7 +242,7 @@ static inline bool yamir_islocaladdr(struct yamir_state *s, uint32_t addr)
     return s->local_addr == addr;
 }
 
-static const char *yamir_type_tostr(uint32_t type)
+static const char *type_tostr(uint32_t type)
 {
     static char *names[] = {
         [YAMIR_ROUTE_NEED] = "ROUTE_NEED",
@@ -584,24 +584,27 @@ static void yamir_inc_seqnum(struct yamir_state *ys)
     ys->own_seqnum++;
 }
 
-static int send_dymo_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t dest)
+static int dymo_msg_send(struct yamir_state *ys, struct pbb_msg *msg, uint32_t addr)
 {
     static unsigned char wbuf[WBUF_SIZE];
 
+    log_debug("msg(type=%d flags=0x%x nodes=%d tlvs=%d) dst=%s", 
+        msg->type, msg->flags, msg->num_node, msg->num_tlv, addr_tostr(addr));
+
     // encode pkt
     ssize_t rc = pbb_msg_encode(msg, wbuf, sizeof(wbuf));
-    if (rc <= 0) return rc;
+    if (rc < 0) return log_error_rf("ppb encode failed ec=%ld", rc);
     size_t len = rc;
 
     // TODO implement rfc5148 jitter
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = dest;
-    addr.sin_port = htons(DYMO_PORT);
+    struct sockaddr_in sin;
+    memset(&sin, 0, sizeof(addr));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = addr;
+    sin.sin_port = htons(DYMO_PORT);
 
-    log_debug("msg(type=%d,len=%zu) dst=%s", msg->type, len, sockaddr_tostr(&addr));
+    log_debug("sendto len=%zu dst=%s", len, sockaddr_tostr(&sin));
 
     rc = sendto(ys->dymo_fd, wbuf, len, 0, (struct sockaddr *) &addr, sizeof(addr));
     if (rc == -1) return log_errno_rf("send_msg");
@@ -610,7 +613,7 @@ static int send_dymo_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t d
 }
 
 // 5.3.2 (send reply back to request originator)
-static int send_dymo_reply(struct yamir_state *ys, struct pbb_msg *req)
+static int dymo_reply_send(struct yamir_state *ys, struct pbb_msg *req)
 {
     struct pbb_msg reply;
 
@@ -640,10 +643,10 @@ static int send_dymo_reply(struct yamir_state *ys, struct pbb_msg *req)
     reply.addr_len = 4;
 
     // we route the message via the next hop
-    return send_dymo_msg(ys, &reply, dr->nexthop_addr);
+    return dymo_msg_send(ys, &reply, dr->nexthop_addr);
 }
 
-static int recv_dymo_reply(struct yamir_state *ys, struct pbb_msg *reply)
+static int dymo_reply_recv(struct yamir_state *ys, struct pbb_msg *reply)
 {
     struct dymo_req *req;
 
@@ -692,7 +695,7 @@ static bool dec_hop_limit(struct pbb_msg *msg)
 
 // 5.5.3 rm message or data packet cannot be routed to addr
 // TODO add unicast support
-static int send_dymo_rerr(struct yamir_state *ys, uint32_t addr, uint16_t seqnum, uint8_t prefix)
+static int dymo_rerr_send(struct yamir_state *ys, uint32_t addr, uint16_t seqnum, uint8_t prefix)
 {
     struct pbb_msg rerr;
 
@@ -713,7 +716,7 @@ static int send_dymo_rerr(struct yamir_state *ys, uint32_t addr, uint16_t seqnum
         unreach.prefix = prefix;
     }
 
-    return send_dymo_msg(ys, &rerr, ys->mcast_addr);
+    return dymo_msg_send(ys, &rerr, ys->mcast_addr);
 }
 
 // 5.3.4 page 24 relay route-message
@@ -740,15 +743,15 @@ static int relay_rm(struct yamir_state *ys, struct pbb_msg *msg, struct recv_sta
         // need check if rm can be routed towards target
         struct msg_node *target = msg->target;
         struct dymo_route *dr = route_find(ys, target->ip4_addr);
-        if (!dr) return send_dymo_rerr(ys, target->ip4_addr, target->seqnum, target->prefix);
-        if (dr_isbroken(dr)) return send_dymo_rerr(ys, target->ip4_addr, dr->seqnum, target->prefix);
+        if (!dr) return dymo_rerr_send(ys, target->ip4_addr, target->seqnum, target->prefix);
+        if (dr_isbroken(dr)) return dymo_rerr_send(ys, target->ip4_addr, dr->seqnum, target->prefix);
         dst_addr = dr->nexthop_addr;
     }
     else {
         dst_addr = ys->mcast_addr;
     }
 
-    return send_dymo_msg(ys, msg, dst_addr);
+    return dymo_msg_send(ys, msg, dst_addr);
 }
 
 // check valid route-message
@@ -787,7 +790,7 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *req, struct recv_
     }
 
     // request is for us
-    return send_dymo_reply(ys, req);
+    return dymo_reply_send(ys, req);
 }
 
 static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rep, struct recv_state *rs)
@@ -812,7 +815,7 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rep, struct recv_
     }
 
     // reply is for us
-    return recv_dymo_reply(ys, rep);
+    return dymo_reply_recv(ys, rep);
 }
 
 // RERR handling page 28
@@ -873,7 +876,7 @@ static void handle_rerr(struct yamir_state *s, struct pbb_msg *rerr, struct recv
     // for unicast RERR is this the nexthopaddress for the unreachable node
     // or the actual ip destiation address (what happens if there are more
     // than 1 unreachable node in the RERR packet ?
-    send_dymo_msg(s, rerr, s->mcast_addr);
+    dymo_msg_send(s, rerr, s->mcast_addr);
 }
 
 static struct dymo_req *req_create(struct yamir_state *s)
@@ -960,7 +963,7 @@ static void send_dymo_req(struct yamir_state *ys,
         addr_tostr(origin.ip4_addr),
         origin.seqnum);
 
-    send_dymo_msg(ys, &req, ys->mcast_addr);
+    dymo_msg_send(ys, &req, ys->mcast_addr);
 }
 
 static void dymo_req_timeout(void *arg);
@@ -1085,16 +1088,15 @@ static void route_err(struct yamir_state *ys, uint32_t addr, int ifindex)
     }
 
     // TODO shoud we get prefix from interface
-    send_dymo_rerr(ys, addr, seqnum, 0);
+    dymo_rerr_send(ys, addr, seqnum, 0);
 }
-
 
 // stevens page 533 // see ip 7 IP_PKTINFO
 static int recvfrom_wstate(int fd, size_t vlen,
     struct mmsghdr msgs[static vlen],
     struct recv_state *states)
 {
-    int nr = recvmmsg(fd, msgs, vlen, 0, NULL);
+    int nr = recvmmsg(fd, msgs, vlen, MSG_DONTWAIT, NULL);
     if (nr == -1 || !states) return nr;
 
     // retrieve ancillary data for each packet
@@ -1200,78 +1202,6 @@ static void dymo_req_done(struct dymo_req *req, int reason)
     dymo_req_free(req);
 }
 
-static int dymo_init(struct yamir_state *ys)
-{
-    // create the socket 
-    int sock_type =  SOCK_DGRAM | SOCK_NONBLOCK;
-    ys->dymo_fd = socket(AF_INET, sock_type, 0);
-    if (ys->dymo_fd == -1) return log_errno_rf("dymo_init: socket");
-
-    // get interface index
-    struct ifreq ifreq;
-    strcpy(ifreq.ifr_name, ys->if_name); 
-    int ec = ioctl(ys->dymo_fd, SIOCGIFINDEX, &ifreq);
-    if (ec == -1) return log_errno_rf("dymo_init: i/f not found");
-    ys->if_index = ifreq.ifr_ifindex;
-
-    // interface addr
-    ec = ioctl(ys->dymo_fd, SIOCGIFADDR, &ifreq);
-    if (ec == -1) return log_errno_rf("dymo_init: get i/f addr");
-    struct sockaddr_in *sin = (struct sockaddr_in *) &ifreq.ifr_addr;
-    if (sin->sin_family != AF_INET) return log_errno_rf("dymo_init: if-addr not ipv4");
-    ys->local_addr = sin->sin_addr.s_addr;
-
-    // broadcast addr
-    ec = ioctl(ys->dymo_fd, SIOCGIFBRDADDR, &ifreq);
-    if (ec == -1) return log_errno_rf("dymo_init: get i/f broadcast addr");
-    sin = (struct sockaddr_in *) &ifreq.ifr_broadaddr;
-    if (sin->sin_family != AF_INET) return log_errno_rf("dymo_init: bc-addr not ipv4");
-    ys->bcast_addr = sin->sin_addr.s_addr;
-
-    // request meta-data on IP packets
-    int on = 1;
-    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
-    if (ec == -1) return log_errno_rf("set IP_PKTINFO");
-
-    // draft says set GTSM (ttl=255)
-    int ttl = 255;
-    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
-    if (ec == -1) return log_errno_rf("set IP_TTL");
-    ec = setsockopt(ys->dymo_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-    if (ec == -1) return log_errno_rf("set SO_REUSEADDR");
-
-    // DYMO packets must have our IP address and leave/egress from our interface
-    ec = setsockopt(ys->dymo_fd, SOL_SOCKET, SO_BINDTODEVICE, ys->if_name, strlen(ys->if_name));
-    if (ec == -1) return log_errno_rf("set bindtodevice");
-
-    // add link-local multicast (bsd/linux grr)
-    struct ip_mreq mreq; 
-    mreq.imr_multiaddr.s_addr = inet_addr(LL_MANET_ROUTERS);
-    mreq.imr_interface.s_addr = ys->local_addr;
-    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
-    if (ec == -1) return log_errno_rf("multicast join");
-    ys->mcast_addr = mreq.imr_multiaddr.s_addr;
-
-    // turn off multicast loopback
-    int off = 0;
-    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &off, sizeof(off));
-    if (ec == -1) return log_errno_rf("set IP_MULTICAST_LOOP");
-
-    // draft says set GTSM (ttl=255)
-    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
-    if (ec == -1) return log_errno_rf("set IP_MULTICAST_TTL");
-
-    // bind socket to 0.0.0.0:port
-    sin->sin_family = AF_INET;
-    sin->sin_addr.s_addr = htonl(INADDR_ANY);
-    sin->sin_port = htons(DYMO_PORT);
-    ec = bind(ys->dymo_fd, (struct sockaddr *) sin, sizeof(*sin));
-    if (ec == -1) return log_errno_rf("bind_dymo");
-
-    log_info("+", "Started dymo if=%s addr=%s", ys->if_name, sockaddr_tostr(sin));
-
-    return 0;
-}
 
 // function from iproute2 used in quagga/zebra
 static int addattr_l(struct nlmsghdr *n, size_t maxlen, int type, void *data, int alen)
@@ -1289,7 +1219,6 @@ static int addattr_l(struct nlmsghdr *n, size_t maxlen, int type, void *data, in
 
     return 0;
 }
-
 
 // send msg to kyamir
 static int kyamir_send(struct yamir_state *ys, uint32_t type, uint32_t addr, int ifindex)
@@ -1331,8 +1260,7 @@ static int kyamir_send(struct yamir_state *ys, uint32_t type, uint32_t addr, int
     msg.msg_controllen = 0;
     msg.msg_flags = 0;
 
-    log_debug("Send msg(type=%s addr=%s,ifindex=%d)",
-        yamir_type_tostr(type), addr_tostr(addr), ifindex);
+    log_debug("msg type=%s addr=%s if=%d", type_tostr(type), addr_tostr(addr), ifindex);
 
     int ec = sendmsg(ys->kyamir_fd, &msg, 0); 
     if (ec == -1) return log_errno_rf("netlink_send");
@@ -1343,6 +1271,8 @@ static int kyamir_send(struct yamir_state *ys, uint32_t type, uint32_t addr, int
 // process yamir_msg from kyamir
 static void kyamir_process_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
 {
+    log_debug("type=%s addr=%s if=%d", type_tostr(type), addr_tostr(msg->addr), msg->ifindex);
+
     switch(type) {
     case YAMIR_ROUTE_NEED:  route_discover(ys, msg->addr, msg->ifindex); break;
     case YAMIR_ROUTE_INUSE: route_inuse(ys, msg->addr, msg->ifindex); break;
@@ -1354,6 +1284,8 @@ static void kyamir_process_msg(struct yamir_state *ys, int type, struct yamir_ms
 // process mmsg from kyamir
 static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
 {
+    log_debug("msg len=%u", mmsg->msg_len);
+
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
@@ -1370,7 +1302,9 @@ static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
 // recv msgs from kyamir
 static int kyamir_recv(struct yamir_state *ys)
 {
-    int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, 0, NULL);
+    log_debug("recv kyamird_fd=%d", ys->kyamir_fd);
+
+    int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, MSG_DONTWAIT, NULL);
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return log_errno_rf("recvmmsg %d failed", ys->kyamir_fd);
@@ -1392,7 +1326,9 @@ static void route_process_mmsg(struct yamir_state *ys, struct mmsghdr *msg)
 // recv route msg from kernel
 static int route_recv(struct yamir_state *ys)
 {
-    int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, 0, NULL);
+    log_debug("recv route_fd=%d", ys->route_fd);
+
+    int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, MSG_DONTWAIT, NULL);
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return log_errno_rf("recvmmsg %d failed", ys->kyamir_fd);
@@ -1488,6 +1424,8 @@ static int route_send(struct yamir_state *ys, int type, struct dymo_route *dr)
 // setup NETLINK interface to kyamir kernel module and linux routing tables
 static int netlink_init(struct yamir_state *ys)
 {
+    log_debug("init kyamir-nl=%d route-nl=%d", NETLINK_YAMIR, NETLINK_ROUTE);
+
     // setup netlink interface to our kernel module
     ys->kyamir_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_YAMIR);
     if (ys->kyamir_fd == -1) return log_errno_rf("socket netlink_yamir");
@@ -1518,9 +1456,85 @@ static int netlink_init(struct yamir_state *ys)
     return 0;
 }
 
+static int dymo_init(struct yamir_state *ys)
+{
+    log_debug("init ifname=%s", ys->if_name);
+
+    // create the socket 
+    int sock_type =  SOCK_DGRAM | SOCK_NONBLOCK;
+    ys->dymo_fd = socket(AF_INET, sock_type, 0);
+    if (ys->dymo_fd == -1) return log_errno_rf("dymo_init: socket");
+
+    // get interface index
+    struct ifreq ifreq;
+    strcpy(ifreq.ifr_name, ys->if_name); 
+    int ec = ioctl(ys->dymo_fd, SIOCGIFINDEX, &ifreq);
+    if (ec == -1) return log_errno_rf("dymo_init: i/f not found");
+    ys->if_index = ifreq.ifr_ifindex;
+
+    // interface addr
+    ec = ioctl(ys->dymo_fd, SIOCGIFADDR, &ifreq);
+    if (ec == -1) return log_errno_rf("dymo_init: get i/f addr");
+    struct sockaddr_in *sin = (struct sockaddr_in *) &ifreq.ifr_addr;
+    if (sin->sin_family != AF_INET) return log_errno_rf("dymo_init: if-addr not ipv4");
+    ys->local_addr = sin->sin_addr.s_addr;
+
+    // broadcast addr
+    ec = ioctl(ys->dymo_fd, SIOCGIFBRDADDR, &ifreq);
+    if (ec == -1) return log_errno_rf("dymo_init: get i/f broadcast addr");
+    sin = (struct sockaddr_in *) &ifreq.ifr_broadaddr;
+    if (sin->sin_family != AF_INET) return log_errno_rf("dymo_init: bc-addr not ipv4");
+    ys->bcast_addr = sin->sin_addr.s_addr;
+
+    // request meta-data on IP packets
+    int on = 1;
+    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
+    if (ec == -1) return log_errno_rf("set IP_PKTINFO");
+
+    // draft says set GTSM (ttl=255)
+    int ttl = 255;
+    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+    if (ec == -1) return log_errno_rf("set IP_TTL");
+    ec = setsockopt(ys->dymo_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    if (ec == -1) return log_errno_rf("set SO_REUSEADDR");
+
+    // DYMO packets must have our IP address and leave/egress from our interface
+    ec = setsockopt(ys->dymo_fd, SOL_SOCKET, SO_BINDTODEVICE, ys->if_name, strlen(ys->if_name));
+    if (ec == -1) return log_errno_rf("set bindtodevice");
+
+    // add link-local multicast (bsd/linux grr)
+    struct ip_mreq mreq; 
+    mreq.imr_multiaddr.s_addr = inet_addr(LL_MANET_ROUTERS);
+    mreq.imr_interface.s_addr = ys->local_addr;
+    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+    if (ec == -1) return log_errno_rf("multicast join");
+    ys->mcast_addr = mreq.imr_multiaddr.s_addr;
+
+    // turn off multicast loopback
+    int off = 0;
+    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_MULTICAST_LOOP, &off, sizeof(off));
+    if (ec == -1) return log_errno_rf("set IP_MULTICAST_LOOP");
+
+    // draft says set GTSM (ttl=255)
+    ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+    if (ec == -1) return log_errno_rf("set IP_MULTICAST_TTL");
+
+    // bind socket to 0.0.0.0:port
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = htonl(INADDR_ANY);
+    sin->sin_port = htons(DYMO_PORT);
+    ec = bind(ys->dymo_fd, (struct sockaddr *) sin, sizeof(*sin));
+    if (ec == -1) return log_errno_rf("bind_dymo");
+
+    log_info("+", "Started dymo if=%s addr=%s", ys->if_name, sockaddr_tostr(sin));
+
+    return 0;
+}
+
 static int setup_daemon(struct yamir_state *ys)
 {
     if (ys->daemonize) {
+        log_debug("Run in background");
         int rc = daemon(1, 0);
         if (rc == -1) return log_errno_rf("daemonize");
     }
@@ -1645,7 +1659,7 @@ int main(int argc, char *argv[])
     int wait_ms = -1;
 
     while (keep_running) {
-        wait_ms = timer_process(&ys->timers, wait_ms);
+        wait_ms = timer_check(&ys->timers);
         int rc = poll(fds, ARR_LEN(fds), wait_ms); 
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;

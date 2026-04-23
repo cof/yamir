@@ -69,7 +69,7 @@ static char *ifnames[MAX_DEVICE] = {
     DYMO_INTERFACE
 };
 
-MODULE_PARM_DESC(ifnames, "Inteface names");
+MODULE_PARM_DESC(ifnames, "Interface names");
 module_param_array(ifnames, charp, NULL, 0); 
 
 static void route_flush(void)
@@ -458,7 +458,7 @@ static int netlink_send_msg(int type, __be32 addr, int ifindex)
     };
 
     struct sk_buff *skb = netlink_build_msg(type, &msg);
-    if (skb) return -ENOMEM;
+    if (!skb) return -ENOMEM;
 
     return netlink_broadcast(netlink_sock, skb, 0, NETLINK_YAMIR_GROUP, GFP_USER);
 }
@@ -534,6 +534,7 @@ static unsigned int do_kyamir_nf(struct net *net,
 {
     int rc = NF_ACCEPT;
     int entry_found;
+    struct dymo_device *device;
 
     // accept if not skb
     if (!skb) return rc;
@@ -556,16 +557,15 @@ static unsigned int do_kyamir_nf(struct net *net,
         }
     }
 
-    // only interested in our interfaces
-    struct dymo_device *device = find_device(in);
-    if (!device) return rc;
-
-    // ignore broadcasts
-    if (iph->daddr == device->broadcast) return rc;
-
     switch(hook) {
     // incoming packets from net device to host, before routing
     case NF_INET_PRE_ROUTING:
+        // only interested in our interfaces 
+        device = find_device(in);   
+        if (!device) return rc;
+        // ignore broadcasts
+        if (iph->daddr == device->broadcast) return rc;
+
         // tell userpace that this route is in use
         netlink_send_msg(YAMIR_ROUTE_INUSE, iph->saddr, in->ifindex);
         // accept if ip packet sent from or to this node
@@ -580,8 +580,15 @@ static unsigned int do_kyamir_nf(struct net *net,
 
     // host originated packets, before routing
     case NF_INET_LOCAL_OUT:
+        // only interested in our interfaces 
+        device = find_device(out);   
+        if (!device) return rc;
+        // ignore broadcasts
+        if (iph->daddr == device->broadcast) return rc;
+
         // accept if dst is routable 
         if (route_exists(iph->daddr)) break;
+
 
         // assume first time if dst not already on queue
         entry_found = queue_exists(iph->daddr);
@@ -590,7 +597,6 @@ static unsigned int do_kyamir_nf(struct net *net,
             break;
         }
 
-        // 
         if (!entry_found) {
             netlink_send_msg(YAMIR_ROUTE_NEED, iph->daddr, out->ifindex);
         }
@@ -601,6 +607,12 @@ static unsigned int do_kyamir_nf(struct net *net,
 
     // outgoing packets from host to net device, after routing
     case NF_INET_POST_ROUTING:
+        // only interested in our interfaces 
+        device = find_device(out);   
+        if (!device) return rc;
+        // ignore broadcasts
+        if (iph->daddr == device->broadcast) return rc;
+
         // tell userspace that this route is in use
         netlink_send_msg(YAMIR_ROUTE_INUSE, iph->daddr, out->ifindex);
         break;
@@ -662,63 +674,63 @@ static struct nf_hook_ops kyamir_hook_ops[] = {
 static void load_devices(void)
 {
     struct net_device *ndev;
-        struct in_device *idev;
+    struct in_device *idev;
 
-        char name[IFNAMSIZ];
+    char name[IFNAMSIZ];
 
-        for (int i = 0; ifnames[i]; i++) {
+    for (int i = 0; ifnames[i]; i++) {
 
-            if (num_device >= ARRAY_SIZE(dymo_devices)) {
-                printk(KERN_INFO "kyamir: Reached device limit %d\n", MAX_DEVICE);
-                break;
-            }
+        if (num_device >= ARRAY_SIZE(dymo_devices)) {
+            printk(KERN_INFO "kyamir: Reached device limit %d\n", MAX_DEVICE);
+            break;
+        }
 
-            // alias hack
-            kyamir_strlcpy(name, ifnames[i], sizeof(name));
-            char *cp = strchr(name, ':');
-            if (cp) *cp = '\0';
+        // alias hack
+        kyamir_strlcpy(name, ifnames[i], sizeof(name));
+        char *cp = strchr(name, ':');
+        if (cp) *cp = '\0';
 
-            ndev = dev_get_by_name(&init_net, name);
-            if (!ndev) {
-                printk(KERN_INFO "kyamir: No such network device %s\n", name);
-                continue;
-            }
-            if (cp) *cp = ':';
+        ndev = dev_get_by_name(&init_net, name);
+        if (!ndev) {
+            printk(KERN_INFO "kyamir: No such network device %s\n", name);
+            continue;
+        }
+        if (cp) *cp = ':';
 
-            // now look for ipv4 address bound to that name
-            idev = in_dev_get(ndev);
-            if (idev) {
-                struct in_ifaddr *ifa;
-                rcu_read_lock();
-                for (ifa = idev->ifa_list; ifa; ifa = ifa->ifa_next) {
-                    if (!strcmp(name, ifa->ifa_label)) {
-                        struct dymo_device *ddev= &dymo_devices[num_device++];
-                        ddev->vaddr = cp ? 1 : 0;
-                        ddev->ifindex = ndev->ifindex;
-                        ddev->address = ifa->ifa_address;
-                        ddev->mask = ifa->ifa_mask;
-                        ddev->broadcast = ifa->ifa_broadcast;
-                        strscpy(ddev->ifname, name, sizeof(ddev->ifname));
-                        printk(KERN_INFO "kyamir: Adding device %s\n", name);
-                        break;
-                    }
+        // now look for ipv4 address bound to that name
+        idev = in_dev_get(ndev);
+        if (idev) {
+            struct in_ifaddr *ifa;
+            rcu_read_lock();
+            for (ifa = idev->ifa_list; ifa; ifa = ifa->ifa_next) {
+                if (!strcmp(name, ifa->ifa_label)) {
+                    struct dymo_device *ddev= &dymo_devices[num_device++];
+                    ddev->vaddr = cp ? 1 : 0;
+                    ddev->ifindex = ndev->ifindex;
+                    ddev->address = ifa->ifa_address;
+                    ddev->mask = ifa->ifa_mask;
+                    ddev->broadcast = ifa->ifa_broadcast;
+                    strscpy(ddev->ifname, name, sizeof(ddev->ifname));
+                    printk(KERN_INFO "kyamir: Adding device %s idx=%d\n", name, ddev->ifindex);
+                    break;
                 }
-                rcu_read_unlock();
-                in_dev_put(idev);
             }
-            dev_put(ndev);
+            rcu_read_unlock();
+            in_dev_put(idev);
         }
+        dev_put(ndev);
     }
+}
 
-    static void kyamir_netfilter_deinit(void)
-    {
-        struct net *net = kyamir_get_net();
-        int i = ARRAY_SIZE(kyamir_hook_ops);
-        while (i > 0) {
-            i--;
-            kyamir_unregister_nf_hook(net, &kyamir_hook_ops[i]);
-        }
+static void kyamir_netfilter_deinit(void)
+{
+    struct net *net = kyamir_get_net();
+    int i = ARRAY_SIZE(kyamir_hook_ops);
+    while (i > 0) {
+        i--;
+        kyamir_unregister_nf_hook(net, &kyamir_hook_ops[i]);
     }
+}
 
 static int kyamir_netfilter_init(void)
 {
