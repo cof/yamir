@@ -3,10 +3,9 @@
  * -------------------
  * timer_init(tm)  : init timers state
  * timer_deinit(tm) : deinit timer state
- * timer_process(tm, next_wait) : process timers, return next_wait or next_expiry
+ * timer_check(tm) -> expiry  : process timers, return expiry_ms
  * timer_add(tm, msec, cb, arg) -> tid : add timer, return tid
  * time_cancel(tm, tid)  : cancel timer
- *
  */
 #ifndef _TIMER_H_
 #define _TIMER_H_

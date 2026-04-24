@@ -1,6 +1,6 @@
 /*
  * Yet Another Manet IP Router (YAMIR)
- * kyamir - kernel space kyamir module
+ * kyamir - kernel space yamir module
  */
 #include <linux/version.h>
 #include <linux/module.h>
@@ -139,36 +139,32 @@ static void route_del(uint32_t addr)
 
 static int route_add(uint32_t addr)
 {
-    struct route_entry *entry;
-    int rc;
+    if (route_exists(addr)) return 0;
 
-    if (route_exists(addr)) {
-        rc = 0;
-    }
-    else if ( (entry=kmalloc(sizeof(*entry), GFP_ATOMIC)) == NULL) {
+    struct route_entry *entry = kmalloc(sizeof(*entry), GFP_ATOMIC);
+    if (!entry) {
         printk(KERN_ERR "kyamir: OOM in route_add()\n");
-        rc = -ENOMEM;
+        return -ENOMEM;
+    }
+
+    // save entry data
+    entry->addr = addr;
+
+    // now add to list
+    write_lock_bh(&route_lock);
+
+    int rc = 0;
+    if (route_total >= ROUTE_MAX_LEN) {
+        printk(KERN_WARNING "kyamir: max list length reached\n");
+        kfree(entry);
+        rc = -ENOSPC;
     }
     else {
-        // save entry data
-        entry->addr = addr;
-
-        // now add to list
-        write_lock_bh(&route_lock);
-
-        if (route_total >= ROUTE_MAX_LEN) {
-            printk(KERN_WARNING "kyamir: max list length reached\n");
-            kfree(entry);
-            rc = -ENOSPC;
-        }
-        else {
-            list_add(&entry->list, &route_list);
-            route_total++;
-            rc = 0;
-        }
-
-        write_unlock_bh(&route_lock);
+        list_add(&entry->list, &route_list);
+        route_total++;
     }
+
+    write_unlock_bh(&route_lock);
 
     return rc;
 }
@@ -252,9 +248,12 @@ static int enqueue_packet(
 
     write_lock_bh(&queue_lock);
 
+    int rc = 0;
     if (queue_total >= QUEUE_MAX_LEN) {
         printk(KERN_WARNING "kyamir: max packet queue length reached\n");
         kfree(pkt);
+        pkt = NULL;
+        rc = -ENOSPC;
     }
     else {
         list_add(&pkt->list, &queue_list);
@@ -263,9 +262,7 @@ static int enqueue_packet(
 
     write_unlock_bh(&queue_lock);
 
-    if (!pkt) return -ENOSPC;
-
-    return 0;
+    return rc;
 }
 
 static void queue_drop(uint32_t addr)
@@ -588,7 +585,6 @@ static unsigned int do_kyamir_nf(struct net *net,
 
         // accept if dst is routable 
         if (route_exists(iph->daddr)) break;
-
 
         // assume first time if dst not already on queue
         entry_found = queue_exists(iph->daddr);

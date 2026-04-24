@@ -1,7 +1,7 @@
 #
 # Yet Another Manet IP Router
 #
-# kernel module
+# kyamir - kernel space yamir module
 #
 .PHONY : all clean doc
 
