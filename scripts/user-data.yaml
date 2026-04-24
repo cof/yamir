@@ -5,7 +5,7 @@ datasource_list: [ NoCloud ]
 packages:
   - util-linux
   - alpine-sdk
-  - libcap
+  - libcap-setcap
   - tcpdump
   - linux-firmware-rtlwifi
   - wireless-regdb
@@ -52,4 +52,5 @@ runcmd:
       sed -i 's/default=virt/default=openpax/' /etc/update-extlinux.conf
       update-extlinux
     fi
+    reboot
 

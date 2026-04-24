@@ -132,7 +132,7 @@ test: $(TEST_RUNNER)
 
 # VM for testing kyamir
 # -------------------
-VM_NAME = test-yamir
+VM_NAME = test-kyamir
 VM_RESIZE = 1G
 include scripts/build_vm.mk
 build-vm: vm-create

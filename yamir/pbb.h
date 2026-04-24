@@ -169,8 +169,8 @@ static inline bool pbb_has_tlv(const struct pbb_hdr *hdr)
     return hdr->flags & PBB_HF_TLV;
 }
 
-// message node (MN)
-struct msg_node {
+// message node (MN) - aka addr-block + tlv
+struct pbb_node {
     union {
         uint8_t  addr[16];
         uint32_t ip4_addr;
@@ -183,6 +183,17 @@ struct msg_node {
     uint8_t  flags;
 };
 
+static inline struct pbb_node *pbb_node_reset(struct pbb_node *mn)
+{
+    mn->dist = 0;
+    mn->vldtime = 0;
+    mn->seqnum = 0;
+    mn->prefix = 0;
+    mn->flags = 0;
+
+    return mn;
+}
+
 // msg node flags
 #define PBB_NF_SKIP  (1 << 0)
 #define PBB_NF_DIST  (1 << 1)
@@ -191,27 +202,27 @@ struct msg_node {
 #define PBB_NF_PREF  (1 << 4)
 
 // helpers
-static inline bool mn_must_skip(const struct msg_node *mn)
+static inline bool pbb_node_skip(const struct pbb_node *mn)
 {
     return mn->flags & PBB_NF_SKIP;
 }
 
-static inline bool mn_has_dist(const struct msg_node *mn)
+static inline bool pbb_node_dist(const struct pbb_node *mn)
 {
     return mn->flags & PBB_NF_DIST;
 }
 
-static inline bool mn_has_vtim(const struct msg_node *mn)
+static inline bool pbb_node_vtim(const struct pbb_node *mn)
 {
     return mn->flags & PBB_NF_VTIM;
 }
 
-static inline bool mn_has_seqn(const struct msg_node *mn)
+static inline bool pbb_node_seqn(const struct pbb_node *mn)
 {
     return mn->flags & PBB_NF_SEQN;
 }
 
-static inline bool mn_has_pref(const struct msg_node *mn)
+static inline bool pbb_node_pref(const struct pbb_node *mn)
 {
     return mn->flags & PBB_NF_PREF;
 }
@@ -238,11 +249,11 @@ struct pbb_msg {
     // well know tlv fields
     uint32_t did; 
     // address extracted from address blocks
-    struct msg_node *target;
-    struct msg_node *origin;
+    struct pbb_node *target;
+    struct pbb_node *origin;
     // additional nodes
     struct pbb_tlv  tlvs[PBB_MSG_MAXTLV];
-    struct msg_node nodes[PBB_MSG_MAXNODE];
+    struct pbb_node nodes[PBB_MSG_MAXNODE];
 };
 
 // <msg-flags> 4-bit field - network order (i.e MSB is bit 0) 
@@ -272,76 +283,86 @@ static inline void pbb_msg_reset(struct pbb_msg *msg)
     msg->origin = 0;
 }
 
-static inline bool pbb_msg_has_orig(const struct pbb_msg *msg)
+static inline bool pbb_msg_orig(const struct pbb_msg *msg)
 {
     return msg->flags & PBB_MF_ORIG;
 }
 
-static inline bool pbb_msg_has_hlim(const struct pbb_msg *msg)
+static inline bool pbb_msg_hlim(const struct pbb_msg *msg)
 {
     return msg->flags & PBB_MF_HLIM;
 }
 
-static inline bool pbb_msg_has_hcnt(const struct pbb_msg *msg)
+static inline bool pbb_msg_hcnt(const struct pbb_msg *msg)
 {
     return msg->flags & PBB_MF_HCNT;
 }
 
-static inline bool pbb_msg_has_seqn(const struct pbb_msg *msg)
+static inline bool pbb_msg_seqn(const struct pbb_msg *msg)
 {
     return msg->flags & PBB_MF_SEQN;
 }
 
-enum pkt_field {
-    PF_NONE = 0,
-    PF_PKT_VER_FLAGS,
-    PF_PKT_SEQ_NUM,
-    PF_PKT_TLV_BLOCK,
-    PF_MSG_HDR,
-    PF_MSG_ADDR_LEN,
-    PF_MSG_SIZE,
-    PF_MSG_ORIG_ADDR,
-    PF_MSG_ORIG_SEQNUM,
-    PF_MSG_ORIG_LOCAL,
-    PF_MSG_HOP_LIMIT,
-    PF_MSG_HOP_COUNT,
-    PF_MSG_SEQ_NUM,
-    PF_MSG_TLV_DID,
-    PF_MSG_TLV_BLOCK,
-    PF_ADRBLK_NUM_ADDR,
-    PF_ADRBLK_ADDR_FLAGS,
-    PF_ADRBLK_HEAD_LEN,
-    PF_ADRBLK_HEAD,
-    PF_ADRBLK_TAIL_LEN,
-    PF_ADRBLK_TAIL,
-    PF_ADRBLK_MID,
-    PF_ADRBLK_PREFIX_LEN,
-    PF_TLVBLK_LENGTH,
-    PF_TLVBLK_TLVS,
-    PF_TLV_TYPE,
-    PF_TLV_FLAGS,
-    PF_TLV_TYPE_EXT,
-    PF_TLV_INDEXSTART,
-    PF_TLV_INDEXSTOP,
-    PF_TLV_LENGTH,
-    PF_TLV_VALUE,
-    PF_TARGET_NODE,
-    PF_ORIGIN_NODE,
-    PF_UNREACHABLE_NODE
+enum pbb_field {
+    PBB_NONE = 0,
+    PBB_PKT_VER_FLAGS,
+    PBB_PKT_SEQ_NUM,
+    PBB_PKT_TLV_BLOCK,
+    PBB_MSG_HDR,
+    PBB_MSG_TYPE,
+    PBB_MSG_FLAGS,
+    PBB_MSG_ALEN,
+    PBB_MSG_SIZE,
+    PBB_MSG_OADDR,
+    PBB_MSG_HLIM,
+    PBB_MSG_HCNT,
+    PBB_MSG_SEQN,
+    PBB_MSG_TLV_DID,
+    PBB_MSG_TLV_BLOCK,
+    PBB_ADRBLK_NUM_ADDR,
+    PBB_ADRBLK_ADDR_FLAGS,
+    PBB_ADRBLK_HEAD_LEN,
+    PBB_ADRBLK_HEAD,
+    PBB_ADRBLK_TAIL_LEN,
+    PBB_ADRBLK_TAIL,
+    PBB_ADRBLK_MID,
+    PBB_ADRBLK_PREFIX_LEN,
+    PBB_TLVBLK_LENGTH,
+    PBB_TLVBLK_TLVS,
+    PBB_TLV_TYPE,
+    PBB_TLV_FLAGS,
+    PBB_TLV_TYPE_EXT,
+    PBB_TLV_INDEXSTART,
+    PBB_TLV_INDEXSTOP,
+    PBB_TLV_LENGTH,
+    PBB_TLV_VALUE,
+    PBB_MSG_TNODE,
+    PBB_MSG_ONODE,
+    PBB_MSG_OSEQN,
+    PBB_MSG_OLADDR,
+    PBB_NODE_UNREACH
 };
 
 // api
-struct msg_node *pbb_msg_add_node(struct pbb_msg *msg, struct msg_node *node);
-ssize_t ppb_hdr_encode(struct pbb_hdr *hdr, void *mem, size_t len);
-ssize_t ppb_hdr_decode(struct pbb_hdr *hdr, void *mem, size_t len);
-ssize_t pbb_msg_encode(struct pbb_msg *msg, void *mem, size_t len);
-ssize_t pbb_msg_decode(struct pbb_msg *msg, void *mem, size_t len);
+struct pbb_node *pbb_add_node(struct pbb_msg *msg);
+struct pbb_node *pbb_copy_node(struct pbb_msg *msg, struct pbb_node *src);
 
-int pkt_buf_decode_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr);
-int pkt_buf_decode_msg(struct pkt_buf *buf, struct pbb_msg *msg);
+// mem encode/decode
+ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len);
+ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len);
+ssize_t pbb_msg_enc(struct pbb_msg *msg, void *mem, size_t len);
+ssize_t pbb_msg_dec(struct pbb_msg *msg, void *mem, size_t len);
 
+// pkt_buf encode/decode
+int pkt_buf_hdr_enc(struct pkt_buf *buf, struct pbb_hdr *hdr);
+int pkt_buf_hdr_dec(struct pkt_buf *buf, struct pbb_hdr *hdr);
+int pkt_buf_msg_enc(struct pkt_buf *buf, struct pbb_msg *msg);
+int pkt_buf_msg_dec(struct pkt_buf *buf, struct pbb_msg *msg);
+
+size_t pbb_str_toaddr(const char *str, uint8_t addr[static 16]);
 const char *pbb_addr_tostr(size_t len, uint8_t addr[static len]);
-const char *pbb_type_tostr(uint32_t type);
+const char *pbb_type_tostr(uint8_t type);
+uint8_t pbb_str_totype(const char *str);
 int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len);
 
 #endif
