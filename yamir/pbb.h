@@ -79,11 +79,11 @@ static inline void pkt_buf_inc(struct pkt_buf *buf, size_t len)
     buf->ptr += len;
 }
 
-static inline uint8_t *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
+static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
 {
     if (len > pkt_buf_avail(buf)) return NULL;
 
-    uint8_t *ptr = buf->ptr;
+    void *ptr = buf->ptr;
     buf->ptr += len;
 
     return ptr;

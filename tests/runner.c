@@ -10,8 +10,12 @@
 #include "log.h"
 #include "pbb.h"
 
+#ifndef ARR_LEN
+#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0])) 
+#endif 
+
 struct test_state {
-    int tot_fail;
+    int total_fail;
     int log_msg;
     int num_file;
     char **files;
@@ -126,39 +130,81 @@ static enum test_cmd str_tocmd(const char *str)
 
 enum enc_field {
     ENC_NONE = 0,
-    ENC_PKVER,
-    ENC_PKTFLAGS,
-    ENC_PKTSEQNUM,
-    ENC_MSGTYPE,
-    ENC_MSGFLAGS,
-    ENC_MSGADDRLEN,
-    ENC_MSGHLIMIT,
-    ENC_MSGHCOUNT,
-    ENC_MSGSEQNUM,
-    ENC_MSGOADDR,
-    ENC_MSGTADDR,
-    ENC_MSGADDR
+    ENC_VER,
+    ENC_FLAGS,
+    ENC_SEQNUM,
+    ENC_TYPE,
+    ENC_ADDRLEN,
+    ENC_HLIMIT,
+    ENC_HCOUNT,
+    ENC_OADDR,
+    ENC_TADDR,
+    ENC_ADDR
 };
 
 static enum enc_field str_tofield(const char *str)
 {
-    if (!strcasecmp(str, "pkt_ver"))      return ENC_PKVER;
-    if (!strcasecmp(str, "pkt_flags"))    return ENC_PKTFLAGS;
-    if (!strcasecmp(str, "pkt_seqnum"))   return ENC_PKTSEQNUM;
-    if (!strcasecmp(str, "msg_type"))     return ENC_MSGTYPE;
-    if (!strcasecmp(str, "msg_flags"))    return ENC_MSGFLAGS;
-    if (!strcasecmp(str, "msg_addrlen"))  return ENC_MSGADDRLEN;
-    if (!strcasecmp(str, "msg_hlimit"))   return ENC_MSGHLIMIT;
-    if (!strcasecmp(str, "msg_hcount"))   return ENC_MSGHCOUNT;
-    if (!strcasecmp(str, "msg_seqnum"))   return ENC_MSGSEQNUM;
-    if (!strcasecmp(str, "msg_oaddr"))    return ENC_MSGOADDR;
-    if (!strcasecmp(str, "msg_taddr"))    return ENC_MSGTADDR;
-    if (!strcasecmp(str, "msg_addr"))     return ENC_MSGADDR;
+    if (!strcasecmp(str, "ver"))      return ENC_VER;
+    if (!strcasecmp(str, "flags"))    return ENC_FLAGS;
+    if (!strcasecmp(str, "seqnum"))   return ENC_SEQNUM;
+    if (!strcasecmp(str, "type"))     return ENC_TYPE;
+    if (!strcasecmp(str, "flags"))    return ENC_FLAGS;
+    if (!strcasecmp(str, "addrlen"))  return ENC_ADDRLEN;
+    if (!strcasecmp(str, "hlimit"))   return ENC_HLIMIT;
+    if (!strcasecmp(str, "hcount"))   return ENC_HCOUNT;
+    if (!strcasecmp(str, "oaddr"))    return ENC_OADDR;
+    if (!strcasecmp(str, "taddr"))    return ENC_TADDR;
+    if (!strcasecmp(str, "addr"))     return ENC_ADDR;
 
     return ENC_NONE;
 }
 
-static int enc_str(struct pkt_buf *dst, const char *str)
+static int enc_pkt(struct pkt_buf *dst, const char *str)
+{
+    if (!str) return 0;
+    const char *end = str + strlen(str);
+    char field[256];
+
+    struct pbb_hdr hdr;
+    pbb_hdr_reset(&hdr);
+
+    while (str < end)  {
+        // slice splitch
+        const char *ptr = memchr(str, ' ', end - str);
+        size_t len = ptr ? ptr - str : end - str;
+        memcpy(field, str, len);
+        field[len] = '\0';
+        while (str < end && str[len] == ' ') len++;
+        str += len;
+
+        // extract name:value
+        char *fn = field;
+        char *fv = strchr(fn, ':');
+        if (!fv) return log_errno_rf("%s mising :", fn);
+        *fv++= '\0';
+        if (!strlen(fn)) return log_errno_rf("empty field name");
+        if (!strlen(fv)) return log_errno_rf("%s empty value", fn);
+
+        switch(str_tofield(fn)) {
+        case ENC_VER:
+            hdr.version = atoi(fv); 
+            break;
+        case ENC_FLAGS:
+            hdr.flags = atoi(fv);
+            break;
+        case ENC_SEQNUM: 
+            hdr.seq_num = atoi(fv); 
+            hdr.flags |= PBB_HF_SEQN;
+            break;
+        default:
+            return log_errno_rf("%s unknown", fn);
+        }
+    }
+
+    return pkt_buf_hdr_enc(dst, &hdr);
+}
+
+static int enc_msg(struct pkt_buf *dst, const char *str)
 {
     if (!str) return 0;
     const char *end = str + strlen(str);
@@ -188,32 +234,28 @@ static int enc_str(struct pkt_buf *dst, const char *str)
         if (!strlen(fv)) return log_errno_rf("%s empty value", fn);
 
         switch(str_tofield(fn)) {
-        case ENC_PKVER:
-        case ENC_PKTFLAGS:
-        case ENC_PKTSEQNUM:
-            break;
-        case ENC_MSGTYPE:
+        case ENC_TYPE:
             msg.type = pbb_str_totype(fv);
             break;
-        case ENC_MSGFLAGS:
+        case ENC_FLAGS:
             msg.flags = atoi(fv);
             break;
-        case ENC_MSGADDRLEN:
+        case ENC_ADDRLEN:
             msg.addr_len = atoi(fv);
             break;
-        case ENC_MSGHLIMIT:
+        case ENC_HLIMIT:
             msg.flags |= PBB_MF_HLIM;
             msg.hop_limit = atoi(fv);
             break;
-        case ENC_MSGHCOUNT:
+        case ENC_HCOUNT:
             msg.flags |= PBB_MF_HCNT;
             msg.hop_count = atoi(fv);
             break;
-        case ENC_MSGSEQNUM:
+        case ENC_SEQNUM:
             msg.flags |= PBB_MF_SEQN;
             msg.seq_num = atoi(fv);
             break;
-        case ENC_MSGOADDR:
+        case ENC_OADDR:
             mn = msg.origin;
             if (!mn) {
                 // add it now
@@ -226,7 +268,7 @@ static int enc_str(struct pkt_buf *dst, const char *str)
             if (!msg.addr_len) msg.addr_len = addr_len;
             if (addr_len != msg.addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg.addr_len);
             break;
-        case ENC_MSGTADDR:
+        case ENC_TADDR:
             mn = msg.target;
             if (!mn) {
                 // add it now
@@ -239,7 +281,7 @@ static int enc_str(struct pkt_buf *dst, const char *str)
             if (!msg.addr_len) msg.addr_len = addr_len;
             if (addr_len != msg.addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg.addr_len);
             break;
-        case ENC_MSGADDR:
+        case ENC_ADDR:
             mn = pbb_add_node(&msg);
             if (!mn) return log_error_rf("No space for %s", fn);
             addr_len = pbb_str_toaddr(fv, mn->addr);
@@ -253,26 +295,21 @@ static int enc_str(struct pkt_buf *dst, const char *str)
     }
 
     // encode to dst buffer
-    void *mem = pkt_buf_ptr(dst);
-    size_t len = pkt_buf_avail(dst);
-    ssize_t rc = pbb_msg_enc(&msg, mem, len);
-    if (rc < 0) return log_error_rf("ppb encode failed ec=%ld", rc);
-    pkt_buf_inc(dst, rc);
-
-    return 0;
+    return pkt_buf_msg_enc(dst, &msg);
 }
 
-static int enc_strs(struct pkt_buf *dst, int nstr, char *strs[static nstr])
+static int enc_msgs(struct pkt_buf *dst, int nmsg, char *msgs[static nmsg])
 {
-    for (int i = 0; i < nstr; i++) {
-        if (enc_str(dst, strs[i])) return -1;
+    for (int i = 0; i < nmsg; i++) {
+        if (enc_msg(dst, msgs[i])) return -1;
     }
 
     return 0;
 }
 
 static int run_test(enum test_cmd cmd, 
-    const char *hex, int nstr, char *strs[static nstr])
+    const char *hex, const char *pkt,
+    int nstr, char *strs[static nstr])
 {
     char tmp[2048];
 
@@ -302,7 +339,11 @@ static int run_test(enum test_cmd cmd,
         break;
     case TEST_ENC_END:
         pkt_buf_init(&buf, tmp, sizeof(tmp));
-        rc = enc_strs(&buf, nstr, strs);
+        if (pkt) {
+            rc = enc_pkt(&buf, pkt);
+            if (rc) return ERR_ENC;
+        }
+        rc = enc_msgs(&buf, nstr, strs);
         if (rc) return ERR_ENC;
         // TODO compare ehx
         break;
@@ -314,49 +355,87 @@ static int run_test(enum test_cmd cmd,
     return rc;
 }
 
+static char *store_str(struct pkt_buf *buf, const char *str)
+{
+    size_t len = strlen(str);
+    char *nstr = pkt_buf_mkspace(buf, len  + 1);
+
+    if (nstr) {
+        memcpy(nstr, str, len);
+        nstr[len] = '\0';
+    }
+
+    return nstr;
+}
+
+static char *store_hex(struct pkt_buf *buf, const char *str)
+{
+    size_t len = strlen(str);
+    char *nstr = pkt_buf_mkspace(buf, len +  1);
+
+    if (nstr) {
+        memcpy(nstr, str, len);
+        nstr[len] = '\0';
+        // rewind
+        buf->ptr--;
+    }
+
+    return nstr;
+}
+
 static int test_file(const char *file)
 {
-    char buf[2048];
-    char desc[256];
-    char hex[2048];
-    char store[2048];
+    char lbuf[2048];
+    char sbuf[2048];
+    char hbuf[2048];
     int lineno = 0;
     int testno = 0;
     int num_fail = 0;
     int state = 0;
-    enum test_cmd cmd = 0, cmd1;
-    char *ptr;
-    char *strs[10];
-    int num_str = 0;
-    int num_store = 0;
-    char *args;
+    enum test_cmd cmd = 0;
+    char *pkt = NULL, *desc = NULL;
+    char *msgs[10];
+    size_t nmsg = 0;
+
+    struct pkt_buf strs = PKT_BUF_INIT(sbuf, sizeof(sbuf));
+    struct pkt_buf hex  = PKT_BUF_INIT(hbuf, sizeof(hbuf));
 
     FILE *f = fopen(file, "r");
     if (f == NULL) return -1;
 
-    while (fgets(buf, sizeof(buf), f)) {
+    while (fgets(lbuf, sizeof(lbuf), f)) {
         lineno++;
-        char *line = trim(buf);
+        char *line = trim(lbuf);
         // skip blank lines
         if (strlen(line) == 0) continue;
 
+        char *args;
+        enum test_cmd cmd1;
         int rc = 0;
+
         switch(state) {
-        case 0: // test start
+        case 0: // start
             if (*line != '#') {
-                rc = log_error_rf("line %d expect #", lineno);
+                rc = log_error_rf("line %d expect start #", lineno);
                 break;
             }
-            line = trim(line+1);
+            line = trim(line + 1);
             // new-test
             testno++;
-            strcpy(desc, line);
-            hex[0] = '\0';
-            num_str = 0;
-            num_store = 0;
+            pkt_buf_reset(&strs);
+            pkt_buf_reset(&hex);
+            pkt_buf_endz(&hex);
+            desc = store_str(&strs, line);
+            if (!desc) {
+                rc = log_error_rf("line %d store desc failed %s", lineno, line);
+                break;
+            }
+            pkt = NULL;
+            nmsg = 0;
+            // next state
             state = 1;
             break;
-        case 1: // test desc
+        case 1: // MSG|PKT_START|ENC_START
             args = strchr(line, ' ');
             if (args) *args++ = '\0';
             args = trim(args);
@@ -365,8 +444,12 @@ static int test_file(const char *file)
                 rc = log_error_rf("line %d unsupp %s", lineno, line);
                 break;
             }
-            if (args) strcpy(hex, args);
-            if (cmd == TEST_PKT_START)  state = 2;
+            if (args && !store_str(&hex, args)) {
+                rc = log_error_rf("line %d store hex failed %s", lineno, line);
+                break;
+            }
+            // next-state
+            if (cmd == TEST_PKT_START) state = 2;
             else if (cmd == TEST_ENC_START) state = 3;
             else state = 4;
             break;
@@ -382,11 +465,14 @@ static int test_file(const char *file)
                 state = 4;
                 break;
             }
-            // remove comment
-            ptr = strchr(line, '#');
-            if (ptr) *ptr = '\0';
+            // remove trailing comment
+            args = strchr(line, '#');
+            if (args) *args = '\0';
             // accumlate hex
-            strcat(hex, line);
+            if (!store_hex(&hex, line)) {
+                rc = log_error_rf("line %d store hex failed %s", lineno, line);
+                break;
+            }
             break;
         case 3: // ENC
             cmd1 = str_tocmd(line);
@@ -400,32 +486,48 @@ static int test_file(const char *file)
                 state = 4;
                 break;
             } 
-            // remove comment
-            ptr = strchr(line, '#');
-            if (ptr) *ptr = '\0';
+            // remove trailing comment
+            args = strchr(line, '#');
+            if (args) *args = '\0';
+
+            // name ":" args
             args = strchr(line, ':');
             if (args) *args++ = '\0';
+            args = trim(args);
             if (!args) {
                 rc = log_error_rf("line %d unsupp %s", lineno, line);
                 break;
             }
-            args = trim(args);
-            // str or hex
-            if (!strcasecmp(line, "str")) {
-                // add str to store
-                size_t len = strlen(args);
-                if (len + num_store > sizeof(store)) {
-                    rc = log_error_rf("line %d no-room %s", lineno, line);
+            // pkt,msg,hex
+            if (!strcasecmp(line, "pkt")) {
+                if (pkt) {
+                    rc = log_error_rf("line %d multiple pkt %s", lineno, line);
                     break;
                 }
-                char *str = store + num_store;
-                memcpy(str, args, len);
-                strs[num_str++] = str;
-                num_store += len;
+                pkt = store_str(&strs, args);
+                if (!pkt) {
+                    rc = log_error_rf("line %d no-room for pkt %s", lineno, line);
+                    break;
+                }
+            }
+            else if (!strcasecmp(line, "msg")) {
+                // add msg to store
+                if (nmsg >= ARR_LEN(msgs)) {
+                    rc = log_error_rf("line %d no-room for msg %s", lineno, line);
+                    break;
+                }
+                char *str = store_str(&strs, args);
+                if (!str) {
+                    rc = log_error_rf("line %d no-room for pkt %s", lineno, line);
+                    break;
+                }
+                msgs[nmsg++] = str;
             }
             else if (!strcasecmp(line, "hex")) {
                 // accumlate hex
-                strcat(hex, args);
+                if (!store_hex(&hex, args)) {
+                    rc = log_error_rf("line %d no-room for hex %s", lineno, line);
+                }
             }
             else {
                 rc = log_error_rf("line %d unsupp %s", lineno, line);
@@ -436,7 +538,7 @@ static int test_file(const char *file)
         if (rc) break;
         if (state != 4) continue;
 
-        rc = run_test(cmd, hex, num_str, strs);
+        rc = run_test(cmd, pkt_buf_start(&hex), pkt, nmsg, msgs);
         fprintf(stderr, "test %d werr=%d desc=%s\n", testno, rc, desc);
         if (rc) num_fail++;
 
@@ -446,7 +548,7 @@ static int test_file(const char *file)
     fclose(f);
 
     if (state != 0) {
-        log_error_rf("line %d unsupp %s", lineno, buf);
+        log_error_rf("line %d missing end %d", lineno, cmd);
     }
 
     return num_fail;
@@ -487,9 +589,9 @@ int main(int argc, char *argv[])
     parse_argv(&ts, argc, argv);
 
     for (int i = 0; i < ts.num_file; i++) {
-        int nf = test_file(ts.files[i]);
-        if (nf) ts.tot_fail++;
+        int nfail = test_file(ts.files[i]);
+        if (nfail) ts.total_fail++;
     }
 
-    return ts.tot_fail;
+    return ts.total_fail;
 }

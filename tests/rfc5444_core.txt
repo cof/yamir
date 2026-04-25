@@ -36,5 +36,12 @@ fbfc fdfe 0001 0203 0405 0607 0809 0a0b
 PKT_END
 # encode DMYO request
 ENC_START
-    str: msg_type:RREQ msg_hlimit:10 msg_taddr:8.8.8.8 msg_oaddr:172.0.0.1
+    msg: type:RREQ hlimit:10 taddr:8.8.8.8 oaddr:172.0.0.1
+ENC_END
+# encode multiple msgs
+ENC_START
+    pkt: ver:0 seqnum:0
+    msg: type:RREQ seqnum:1 hlimit:10 taddr:1.1.1.1 oaddr:10.0.0.1
+    msg: type:RREQ seqnum:2 hlimit:10 taddr:2.2.2.2 oaddr:20.0.0.1
+    msg: type:RREQ seqnum:3 hlimit:10 taddr:3.3.3.3 oaddr:30.0.0.1
 ENC_END
