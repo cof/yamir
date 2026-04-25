@@ -935,35 +935,37 @@ static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
     msg.type = DYMO_RREQ;
     msg.hop_limit = MSG_HOPLIMIT;
     msg.flags |= PBB_MF_HLIM;
-    msg.addr_len = 3;
+    msg.addr_len = 4;
 
     yamir_inc_seqnum(ys);
 
     // add target
-    struct pbb_node target = { 0 };
-    target.ip4_addr = req->addr;
+    struct pbb_node *target = pbb_add_node(&msg);
+    if (!target) return log_error_rv("Add target failed");
+    msg.target = target;
+    target->ip4_addr = req->addr;
     if (req->seqnum) {
-        target.flags |= PBB_NF_SEQN;
-        target.seqnum = req->seqnum;
+        target->flags |= PBB_NF_SEQN;
+        target->seqnum = req->seqnum;
     }
     if (req->hop_count) {
-        target.flags |= PBB_NF_DIST;
-        target.dist = req->hop_count;
+        target->flags |= PBB_NF_DIST;
+        target->dist = req->hop_count;
     }
-    msg.target = pbb_copy_node(&msg, &target);
 
     // add origin
-    struct pbb_node origin = { 0 };
-    origin.ip4_addr = ys->local_addr;
-    origin.flags |= PBB_NF_SEQN;
-    origin.seqnum = ys->own_seqnum;
-    msg.origin = pbb_copy_node(&msg, &origin);
+    struct pbb_node *origin = pbb_add_node(&msg);
+    if (!origin) return log_error_rv("Add origin failed");
+    msg.origin = origin;
+    origin->ip4_addr = ys->local_addr;
+    //origin->flags |= PBB_NF_SEQN;
+    origin->seqnum = ys->own_seqnum;
 
     // multicast request
     log_debug("Sending RREQ target=%s origin=%s seqnum=%d",  
-        addr_tostr(target.ip4_addr), 
-        addr_tostr(origin.ip4_addr),
-        origin.seqnum);
+        addr_tostr(target->ip4_addr), 
+        addr_tostr(origin->ip4_addr),
+        origin->seqnum);
 
     dymo_msg_send(ys, &msg, ys->mcast_addr);
 }

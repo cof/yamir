@@ -2,16 +2,25 @@
 hostname: {{VM_NAME}}
 datasource_list: [ NoCloud ]
 
+apk_repos:
+  preserve_repositories: false
+  alpine_repo:
+    base_url: https://dl-cdn.alpinelinux.org/alpine
+    version: edge
+    community_enabled: true
+    testing_enabled: true
+
 packages:
-  - util-linux
-  - alpine-sdk
-  - libcap-setcap
-  - tcpdump
   - linux-firmware-rtlwifi
-  - wireless-regdb
-  - git
   - wireless-tools
+  - wireless-regdb
   - bridge-utils
+  - alpine-sdk
+  - akms
+  - zstd
+  - libcap-setcap
+  - util-linux
+  - tcpdump
 
 passwd:
   list: |
@@ -41,16 +50,10 @@ runcmd:
   - chown alpine:alpine /home/alpine/.profile
   - truncate -s 0 /etc/motd
   - ln -sf /usr/bin/doas /usr/bin/sudo
-  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories
-  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
-  - echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
-  - apk add --update linux-openpax linux-openpax-dev
-  - |
-    KVER=$(ls /lib/modules | grep openpax | head -n1)
-    mkinitfs -k $KVER -o /boot/initramfs-openpax
-    if [ -f "/boot/initramfs-openpax" ]; then
-      sed -i 's/default=virt/default=openpax/' /etc/update-extlinux.conf
-      update-extlinux
-    fi
-    reboot
+  - apk update
+  - apk add linux-openpax linux-openpax-dev
+  - sleep 2
+  - mkinitfs -o /boot/initramfs-openpax $(ls /lib/modules | grep openpax)
+  - sed -i 's/default=virt/default=openpax/' /etc/update-extlinux.conf
+  - update-extlinux
 

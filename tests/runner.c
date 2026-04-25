@@ -137,6 +137,7 @@ enum enc_field {
     ENC_ADDRLEN,
     ENC_HLIMIT,
     ENC_HCOUNT,
+    ENC_DID,
     ENC_OADDR,
     ENC_TADDR,
     ENC_ADDR
@@ -152,6 +153,7 @@ static enum enc_field str_tofield(const char *str)
     if (!strcasecmp(str, "addrlen"))  return ENC_ADDRLEN;
     if (!strcasecmp(str, "hlimit"))   return ENC_HLIMIT;
     if (!strcasecmp(str, "hcount"))   return ENC_HCOUNT;
+    if (!strcasecmp(str, "did"))      return ENC_DID;
     if (!strcasecmp(str, "oaddr"))    return ENC_OADDR;
     if (!strcasecmp(str, "taddr"))    return ENC_TADDR;
     if (!strcasecmp(str, "addr"))     return ENC_ADDR;
@@ -254,6 +256,9 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
         case ENC_SEQNUM:
             msg.flags |= PBB_MF_SEQN;
             msg.seq_num = atoi(fv);
+            break;
+        case ENC_DID:
+            msg.did = atoi(fv);
             break;
         case ENC_OADDR:
             mn = msg.origin;

@@ -196,10 +196,10 @@ static inline struct pbb_node *pbb_node_reset(struct pbb_node *mn)
 
 // msg node flags
 #define PBB_NF_SKIP  (1 << 0)
-#define PBB_NF_DIST  (1 << 1)
-#define PBB_NF_VTIM  (1 << 2)
-#define PBB_NF_SEQN  (1 << 3)
-#define PBB_NF_PREF  (1 << 4)
+#define PBB_NF_PREF  (1 << 1)
+#define PBB_NF_DIST  (1 << 2)
+#define PBB_NF_VTIM  (1 << 3)
+#define PBB_NF_SEQN  (1 << 4)
 
 // helpers
 static inline bool pbb_node_skip(const struct pbb_node *mn)

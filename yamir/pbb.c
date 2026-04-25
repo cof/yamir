@@ -630,7 +630,7 @@ static inline size_t push_mem(struct pkt_buf *buf, uint8_t *data, size_t len)
 // 5.4.1 TLVs
 static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_used=%zu type=%d", pkt_buf_used(buf), tlv->type);
 
     uint8_t flags = tlv->flags;
     uint8_t type, ext;
@@ -667,11 +667,11 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     switch(tlv->flags & (TLVF_VALUE | TLVF_EXTVALUE)) {
     case TLVF_VALUE:
         if (!push_val(buf, tlv->length, 1)) return -1;
-        if (!push_mem(buf, tlv->value, tlv->length)) return -1;
+        if (tlv->length && !push_mem(buf, tlv->value, tlv->length)) return -1;
         break;
     case TLVF_VALUE | TLVF_EXTVALUE:
         if (!push_val(buf, tlv->length, 2)) return -1;
-        if (!push_mem(buf, tlv->value, tlv->length)) return -1;
+        if (tlv->length && !push_mem(buf, tlv->value, tlv->length)) return -1;
         break;
     }
 
@@ -715,7 +715,7 @@ static int enc_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_used=%zui naddr=%d", pkt_buf_used(buf), ab->num_addr);
+    log_debug("buf_used=%zu naddr=%d", pkt_buf_used(buf), ab->num_addr);
 
     uint8_t value[4];
     struct pbb_tlv tlv = {
@@ -743,13 +743,13 @@ static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
     }
 
     // set tlv-length
-    enc_u32(ptr, buf->ptr - ptr, 2);
+    enc_u32(ptr, buf->ptr - (ptr + 2), 2);
 
     return 0;
 }
 
 // 5.3 encode <address-block>
-static int enc_ab(struct pkt_buf *buf, struct pbb_ab *ab)
+static int enc_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
     log_debug("buf_used=%zu naddr=%d", pkt_buf_used(buf), ab->num_addr);
 
@@ -757,8 +757,9 @@ static int enc_ab(struct pkt_buf *buf, struct pbb_ab *ab)
     if (!push_val(buf, ab->flags, 1)) return -1;
 
     if (ab->flags & PBB_ABF_HEAD) {
+        uint8_t *addr = ab->nodes[0]->addr;
         if (!push_val(buf, ab->head_len, 1)) return -1;
-        if (ab->head_len && !push_mem(buf, ab->head, ab->head_len)) return -1;
+        if (ab->head_len && !push_mem(buf, addr, ab->head_len)) return -1;
     }
     
     // table 1
@@ -772,8 +773,12 @@ static int enc_ab(struct pkt_buf *buf, struct pbb_ab *ab)
         break;
     }
 
-    size_t len = ab->mid_len * ab->num_addr;
-    if (len && !push_mem(buf, ab->mid, len)) return -1;
+    if (ab->mid_len) {
+        for (int i= 0; i < ab->num_addr; i++) {
+            uint8_t *addr = ab->nodes[i]->addr + ab->head_len;
+            if (!push_mem(buf, addr, ab->mid_len)) return -1;
+        }
+    }
 
     // table 2
     switch(ab->flags & (PBB_ABF_SPRELEN | PBB_ABF_MPRELEN)) {
@@ -788,14 +793,14 @@ static int enc_ab(struct pkt_buf *buf, struct pbb_ab *ab)
     return 0;
 }
 
-static bool compat_prefix(struct pbb_ab *blk, struct pbb_node *mn)
+static bool compat_prefix(struct pbb_ab *ab, struct pbb_node *mn)
 {
-    bool blk_has_prefix = blk->flags & (PBB_ABF_SPRELEN | PBB_ABF_MPRELEN);
+    bool ab_has_prefix = ab->flags & (PBB_ABF_SPRELEN | PBB_ABF_MPRELEN);
     bool mn_has_prefix = mn->flags & PBB_NF_PREF;
 
-    if (!blk_has_prefix && !mn_has_prefix) return true;
-    if (blk_has_prefix != mn_has_prefix) return false;
-    if (blk->flags & PBB_ABF_SPRELEN) return mn->prefix == *blk->prefix;
+    if (!ab_has_prefix && !mn_has_prefix) return true;
+    if (ab_has_prefix != mn_has_prefix) return false;
+    if (ab->flags & PBB_ABF_SPRELEN) return mn->prefix == ab->prefix[0];
     
     // blk is MULTI_PRELEN 
     return true;
@@ -804,70 +809,80 @@ static bool compat_prefix(struct pbb_ab *blk, struct pbb_node *mn)
 static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 {
     log_debug("naddr=%d addr=%s", ab->num_addr, pbb_addr_tostr(ab->addr_len, mn->addr));
-
     if (pbb_node_skip(mn)) return false;
 
-    bool added = false;
     if (ab->num_addr == 0)  {
-        // first addr
-        ab->flags = PBB_ABF_HEAD;
-        memcpy(ab->head, &mn->addr, ab->addr_len);
-        ab->head_len = ab->addr_len;
+        // alwas compress first addr
+        memcpy(ab->head, mn->addr, ab->addr_len);
+        ab->head_len = 0;
         ab->tail_len = 0;
-        ab->mid_len = 0;
-        added = true;
+        ab->mid_len = ab->addr_len;
     }
-    else if (compat_prefix(ab, mn))  {
-        // find common head
-        uint8_t addr[16];
-        memcpy(addr, &mn->addr, ab->addr_len);
+    else {
+        if (!compat_prefix(ab, mn)) return false;
+        uint8_t *addr = ab->nodes[0]->addr;
+
+        // find common prefix (head)
         int head_len = ab->head_len;
         while (head_len > 0) {
-            if (memcmp(ab->head, addr, head_len) == 0) break;
+            if (memcmp(addr, mn->addr, head_len) == 0) break;
             head_len--;
         }
-        if (head_len == ab->head_len) {
-            uint8_t *mid_addr = ab->mid + (ab->num_addr * ab->mid_len);
-            memcpy(mid_addr, addr + ab->mid_len, ab->mid_len);
-            added = true;
-        }
-        else if (ab->mid_len == 0) {
-            ab->mid_len = ab->head_len - head_len;
-            ab->head_len = head_len;
-            memcpy(ab->mid, ab->head + head_len, ab->mid_len);
-            memcpy(ab->mid + ab->mid_len, addr + head_len, ab->mid_len);
-            added = true;
-        }
-    }
 
-    if (!added) return false;
+        // find common suffix (tail)
+        int tail_len = ab->tail_len;
+        while (tail_len > 0) {
+            int idx = ab->addr_len - tail_len;
+            if (memcmp(addr + idx, mn->addr + idx, tail_len) == 0) break;
+            tail_len--;
+        }
 
-    // now add the prefix
-    if (pbb_node_pref(mn)) {
-        if (ab->flags & PBB_ABF_SPRELEN) {
-            // already have a single prefix
-            if (*ab->prefix != mn->prefix) {
-                // clear single prefix,set multi
-                ab->flags &= ~PBB_ABF_SPRELEN;
-                ab->flags |= PBB_ABF_MPRELEN;
-                // need to duplicate common prefix
-                uint8_t *prefix_addr = ab->prefix + 1;
-                for (int i = 1; i < ab->num_addr; i++) {
-                    *prefix_addr++ = *ab->prefix;
-                }
-                // finally add new network prefix
-                *prefix_addr = mn->prefix;
+        if (head_len + tail_len >= ab->addr_len) {
+            tail_len = ab->addr_len - head_len - 1; 
+        }
+
+        if ((ab->head_len || ab->tail_len) && (!head_len && !tail_len)) return false;
+        if ((ab->head_len + ab->tail_len) - (head_len + tail_len) > 1)  return false;
+
+        // update head/mid/tail lens
+        ab->head_len = head_len;
+        ab->tail_len = tail_len;
+        ab->mid_len = ab->addr_len - ab->head_len - ab->tail_len;
+
+        // turn off all head/taol flags
+        ab->flags &= ~(PBB_ABF_HEAD | PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL);
+
+        if (ab->head_len) ab->flags |= PBB_ABF_HEAD;
+        if (ab->tail_len > 0) {
+            int nzero = 0;
+            uint8_t *tail = addr + ab->addr_len - ab->tail_len;
+            for (int i = 0; i > ab->tail_len; i++) {
+                if (tail[i] != 0) break;
+                nzero++;
             }
+            ab->flags |= (nzero == ab->tail_len) 
+                ? PBB_ABF_ZEROTAIL 
+                : PBB_ABF_FULLTAIL;
+
         }
-        else if (ab->flags & PBB_ABF_MPRELEN) {
-            // store multiple prefix
-            uint8_t *prefix_addr = ab->prefix + ab->num_addr;
-            *prefix_addr = mn->prefix;
+	}
+
+    // common prefix
+    uint8_t prefix = mn->prefix;
+    if (!pbb_node_pref(mn)) {
+        prefix = ab->addr_len == 4 ? 32 : 128;
+    }
+    ab->prefix[ab->num_addr] = prefix;
+
+    if (prefix != ab->prefix[0]) {
+        if (ab->flags & PBB_ABF_SPRELEN) {
+            // clear single prefix,set multi
+            ab->flags &= ~PBB_ABF_SPRELEN;
+            ab->flags |= PBB_ABF_MPRELEN;
         }
-        else {
-            // store single prefix len
+        else if (!(ab->flags & PBB_ABF_MPRELEN)) {
+            // set single prefix
             ab->flags |= PBB_ABF_SPRELEN;
-            *ab->prefix = mn->prefix;
         }
     }
 
@@ -876,27 +891,31 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
     return true;
 }
 
+
 static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_used=%zu nodes=%d", pkt_buf_used(buf), msg->num_node);
 
     uint8_t head[32];
     uint8_t tail[32];
     uint8_t mid[512];
-    uint8_t prefix[32];
+    uint8_t prefix[PBB_MSG_MAXNODE];
 
-    struct pbb_ab ab = { 
-        .head = head,
-        .tail = tail,
-        .mid  = mid,
-        .prefix = prefix,
-        .addr_len = msg->addr_len
-    };
+	struct pbb_ab ab = { 
+		.head = head,
+		.tail = tail,
+		.mid  = mid,
+		.prefix = prefix,
+		.addr_len = msg->addr_len
+	};
 
-    for (int i = 0; i < msg->num_node; i++) {
-        bool compressed = enc_ab_compress(&ab, &msg->nodes[i]);
-        if (compressed && i != msg->num_node - 1) continue;
-        if (enc_ab(buf,  &ab)) return -1;
+    int i = 0;
+    while (i < msg->num_node) {
+        if (enc_ab_compress(&ab, &msg->nodes[i])) {
+            i++; 
+            if (i < msg->num_node) continue;
+        }
+        if (enc_ab_now(buf,  &ab)) return -1;
         if (enc_ab_tlvs(buf, &ab)) return -1;
         pbb_ab_reset(&ab);
     }
@@ -939,7 +958,7 @@ static int enc_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
     }
 
     // set tlv-length
-    enc_u32(ptr, buf->ptr - ptr , 2);
+    enc_u32(ptr, buf->ptr - (ptr + 2), 2);
 
     return 0;
 }
