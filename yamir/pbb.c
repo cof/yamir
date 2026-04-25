@@ -65,18 +65,18 @@ static char *field2str[] = {
 
 // addres-block
 struct pbb_ab {
-    // buffers
-    uint8_t *head;
-    uint8_t *tail;
-    uint8_t *mid;
-    uint8_t *prefix;
-    uint8_t addr_len;
     // state
+    uint8_t addr_len;
     int num_addr;
-    uint8_t flags; // <addr-flags>
+    uint8_t flags;
     int head_len;
     int tail_len;
     int mid_len;
+    // buffers
+    uint8_t *head;
+    uint8_t *mid;
+    uint8_t *tail;
+    uint8_t *prefix;
     struct pbb_node *nodes[PBB_MSG_MAXNODE];
 };
 
@@ -326,7 +326,7 @@ static void dec_ab_expand(struct pbb_ab *ab, struct pbb_msg *msg)
 }
 
 // decode address block
-static int dec_ab(struct pkt_buf *buf, struct pbb_ab *ab)
+static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
     log_debug("buf_avail=%zu", pkt_buf_avail(buf));
 
@@ -404,7 +404,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
     };
 
     while (pkt_buf_avail(buf)) {
-        if (dec_ab(buf, &ab)) return -1;
+        if (dec_ab_now(buf, &ab)) return -1;
         dec_ab_expand(&ab, msg);
         if (dec_addr_tlvs(buf, &ab)) return -1;
         pbb_ab_reset(&ab);
@@ -751,7 +751,7 @@ static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 // 5.3 encode <address-block>
 static int enc_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_used=%zu naddr=%d", pkt_buf_used(buf), ab->num_addr);
+    log_debug("buf_used=%zu flags=0x%x naddr=%d", pkt_buf_used(buf), ab->flags, ab->num_addr);
 
     if (!push_val(buf, ab->num_addr, 1)) return -1;
     if (!push_val(buf, ab->flags, 1)) return -1;
@@ -809,11 +809,11 @@ static bool compat_prefix(struct pbb_ab *ab, struct pbb_node *mn)
 static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 {
     log_debug("naddr=%d addr=%s", ab->num_addr, pbb_addr_tostr(ab->addr_len, mn->addr));
+
     if (pbb_node_skip(mn)) return false;
 
     if (ab->num_addr == 0)  {
         // alwas compress first addr
-        memcpy(ab->head, mn->addr, ab->addr_len);
         ab->head_len = 0;
         ab->tail_len = 0;
         ab->mid_len = ab->addr_len;
@@ -849,10 +849,11 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
         ab->tail_len = tail_len;
         ab->mid_len = ab->addr_len - ab->head_len - ab->tail_len;
 
-        // turn off all head/taol flags
+        // turn off head/tail flags
         ab->flags &= ~(PBB_ABF_HEAD | PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL);
 
         if (ab->head_len) ab->flags |= PBB_ABF_HEAD;
+
         if (ab->tail_len > 0) {
             int nzero = 0;
             uint8_t *tail = addr + ab->addr_len - ab->tail_len;
@@ -863,9 +864,8 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
             ab->flags |= (nzero == ab->tail_len) 
                 ? PBB_ABF_ZEROTAIL 
                 : PBB_ABF_FULLTAIL;
-
         }
-	}
+    }
 
     // common prefix
     uint8_t prefix = mn->prefix;
@@ -888,26 +888,19 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 
     ab->nodes[ab->num_addr++] = mn;
 
+    // compressed
     return true;
 }
-
 
 static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
     log_debug("buf_used=%zu nodes=%d", pkt_buf_used(buf), msg->num_node);
 
-    uint8_t head[32];
-    uint8_t tail[32];
-    uint8_t mid[512];
     uint8_t prefix[PBB_MSG_MAXNODE];
-
-	struct pbb_ab ab = { 
-		.head = head,
-		.tail = tail,
-		.mid  = mid,
-		.prefix = prefix,
-		.addr_len = msg->addr_len
-	};
+    struct pbb_ab ab = { 
+        .addr_len = msg->addr_len,
+        .prefix = prefix
+    };
 
     int i = 0;
     while (i < msg->num_node) {
@@ -924,9 +917,9 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 }
 
 // encode well-known tlvs for message
-static int enc_known_tlvs(struct pkt_buf *buf,  struct pbb_msg *msg) 
+static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg) 
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_used=%zu did=%u", pkt_buf_used(buf), msg->did);
 
     struct pbb_tlv tlv;
     uint8_t value[4];
@@ -944,7 +937,7 @@ static int enc_known_tlvs(struct pkt_buf *buf,  struct pbb_msg *msg)
 // encode tlv-block for message
 static int enc_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_used=%zu tlvs=%d", pkt_buf_used(buf), msg->num_tlv);
 
     // tlvs-length
     uint8_t *ptr = pkt_buf_mkspace(buf, 2);
@@ -979,7 +972,7 @@ static int enc_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 encode <message>
 static int enc_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_used=%zu type=%d flags=0x%x", pkt_buf_used(buf), msg->type, msg->flags);
 
     // msg-header type|flags|addr-length|size|
     uint8_t *hdr = pkt_buf_mkspace(buf, 4);

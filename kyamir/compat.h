@@ -73,14 +73,14 @@ static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct s
         THIS_MODULE
     );
 #elif (LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0))
-	struct netlink_kernel_cfg cfg = {
+    struct netlink_kernel_cfg cfg = {
         .groups = NETLINK_YAMIR_GROUP,
         .input = recv_cb,
         .owner = THIS_MODULE
     };
     return netlink_kernel_create(&init_net, NETLINK_YAMIR, &cfg);
 #else
-	struct netlink_kernel_cfg cfg = {
+    struct netlink_kernel_cfg cfg = {
         .groups = NETLINK_YAMIR_GROUP,
         .input  = recv_cb,
     };
