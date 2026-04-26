@@ -4,7 +4,7 @@ YAMIR is a reactive IP router designed for **Mobile Ad-hoc Networks (MANET)**.
 
 It used a hybrid design where a kernel module detects route requirements and a userpace daemon performs route discovery and maintenace.
 
-- `kyamir` - kernel module use netfilter hooks to intercept IP packets
+- `kyamir` - kernel module use linux netfilter hooks to intercept IP packets
 - `yamird` - userpace daemon uses DYMO for route discovery and rtlnetlink for route mainteance
 
 ## Prerequisites
@@ -26,8 +26,8 @@ It used a hybrid design where a kernel module detects route requirements and a u
 - **make all** (Default): Compiles yamird, kyamir
 - **make test** : Compiles and runs test_runner
 - **make test-yamir** : create/install VM for router testing
-- **make clean**: Removes all compiled binaries, object files
-- **make spotless**: Removes VMs and all compiled binaries, object files
+- **make clean**: remove all compiled binaries, object files
+- **make spotless**: removes VMs and all compiled binaries, object files
 
 
 ## Background & History
