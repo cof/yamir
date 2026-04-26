@@ -1,9 +1,16 @@
 /*
- * A simple timer API
- * -------------------
- * timer_init(tm)  : init timers state
+ * timer
+ * -----
+ * A simple timer API 
+ *
+ * - No dynamic memory allocation (malloc-free) for deterministic performance.
+ * - Structure-composable: built for inline embedding, object compostion & memory locality
+ *
+ * API
+ * ---
+ * timer_init(tm)   : init timer state
  * timer_deinit(tm) : deinit timer state
- * timer_check(tm) -> expiry  : process timers, return expiry_ms
+ * timer_check(tm) -> next_expiry  : process timers, return expiry_ms
  * timer_add(tm, msec, cb, arg) -> tid : add timer, return tid
  * time_cancel(tm, tid)  : cancel timer
  */

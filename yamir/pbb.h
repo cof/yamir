@@ -2,10 +2,37 @@
  * PBB - PacketBB codec for MANET packets
  * --------------------------------------
  * A lightweight PacketBB (rfc5444) codec API for encoding/decoding MANET packets.
- *
+ * 
+ * - No dynamic memory allocation (malloc-free) for deterministic performance.
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
- * - provides buffer, header and message structures for easy pkt generation.
+ * - Provides buffer, header and message structures for easy pkt generation.
+ * - Supports address compression and expansion.
+ *
+ * Structures
+ * ----------
+ * struct pkt_buf  - packet buffer for reading/writing data
+ * struct pbb_hdr  - MANET packet header (pkt-header)
+ * struct pbb_msg  - MANET message 
+ * struct pbb_node - Address info (addr-blocks/tlv-block)
+ *
+ * API
+ * ----
+ * ppb_hdr_enc(hdr, buf, len) : encode pkt-header to memory buffer
+ * ppb_hdr_dec(hdr, buf, len) : decode pkt-header from memory buffer
+ * pbb_msg_enc(msg, buf, len) : encode message to memory buffer
+ * pbb_msg_dec(msg, buf, len) : decode message from memory buffer
+ * -
+ * pkt_buf_hdr_enc(buf, hdr)  : encode pkt-header to pkt-buffer
+ * pkt_buf_hdr_dec(buf, hdr)  : decode pkt-header from pkt-buffer
+ * pkt_buf_msg_enc(buf, msg)  : encode message to pkt-buffer
+ * pkt_buf_msg_dec(buf, msg)  : decode message from pkt-buffer
+ * -
+ * pbb_str_toaddr(str, addr)  : string to IP address
+ * pbb_addr_tostr(len, addr)  : IP adders to string
+ * pbb_type_tostr(type)       : msg-type to string
+ * pbb_str_totype(str)        : string to msg-type
+*  pbb_msg_tostr(msg, buf, len) : message to string
  *
  * Refs
  * ----
@@ -23,7 +50,6 @@
 #define PPB_MAX_ADDRLEN 4 // TODO support IPv6
 
 // pkt buffer
-
 struct pkt_buf {
     uint8_t *data;
     uint8_t *ptr;
