@@ -1,74 +1,32 @@
 /*
+ * YAMIR - Yet Another MANET IP Router 
  *
- * YAMIR - Yet Another Manet IP Router
+ * This a userspace IP router that supports
  *
- * yamir userspace router
+ *  - route updates via its kernel-space module kyamir
+ *  - kernel-space route mangement via rtnetlink
+ *  - route discovery via DYMO protocol
+ *  - uses PacketBB codec to read/write messages
  *
- * We originally where going for DSR but ended up using DYMO instead
+ * Usage:  
+ *  
+ *  ./yamird -i wlan0
  *
- * draft-ietf-manet-dymo-21 k
- * rfc5444 - packetbb
- * RFC3549 - netlink
- * android-ndk
-   TODO use manet port 269 (requires root access)
-   suexec then drop privliges
-    iptables -A PREROUTING -t nat -i eth0 -p tcp 
-   --dport 843 -j REDIRECT --to-port 8430
-    
-   Notes
-   ===== 
-   Running yarmid as not root requires the following permssions
-
-   cap_net_bind_service - uses privileled port 269
-   cap_net_raw          - uses SO_BINDTODEVICE
-   cap_net_admin        - uses netlink multlicast nl_groups != 0
-    
-   sudo setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep yamird
-
-   Okay 
-    netlink_set_nonroot(NETLINK_YAMIR, NL_NONROOT_RECV);
-
-   cannot use python sl4a
-  #define DYMO_PORT 20000
-   ip addr add 192.168.0.1/24  brd + dev wlan0 label wlan0:dymo
-   route add -net 224.0.0.0 netmask 240.0.0.0 dev eth0
-   iptables -F (turn off iptables)
-   iptables -I INPUT 1 -p udp --dst "224.0.0.109" -j ACCEPT
-
-    cannot use getifaddrs - android ndk unsupported
-    <module>: disagrees about version of symbol module_layout
-    samsung c1_rev02_defconfig is incorrect.
-
-   make ARCH=arm CROSS_COMPILE=arm-none-eabi- c1_rev02_defconfig
-   make ARCH=arm CROSS_COMPILE=arm-none-eabi- modules_prepare
-   make ARCH=arm CROSS_COMPILE=arm-none-eabi- modules
-   make -j2 ARCH=arm CROSS_COMPILE=arm-none-eabi-
-
-   linphone - use standard ports
-   wirelesstools iwconfig
-   psmisc killall
-
-   arp req/rsp
-   cat /proc/kmsg 
-    ip route add 192.168.1.6/32 dev eth0 metric 1 via 192.168.1.6
-    ethertype 802.1Q (0x8100) caused by linphone setsockopt IP_TOS
-    strip --strip-unneeded 
-
-   htc-desire 
-     - need wireless firmware file from HTC Evo 4g to enable ad-hoc mode
-     - Get Evo system dump, extract firmware file fw_bcm4329_ap.bin & rename to fw_bcm4329.bin
-     - kernel/module version mismatc due to config file missing EXTRAVERSION var 
-
-   samsung-s2
-     - kernel config file on website differnt to what was used for production handsets
-     - firmware sending out wirless frames with VLAN tags (802.1Q) which htc-desire cant grok
-
+ * Notes:
+ * -----
+ * Running yarmid requires the following permissions
+ *
+ *  cap_net_bind_service - uses privileled port 269
+ *  cap_net_raw          - uses SO_BINDTODEVICE
+ *  cap_net_admin        - uses netlink multlicast nl_groups != 0
+ *   
+ * sudo setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep yamird
+ *
  * Refs
  * ----
  * draft-ietf-manet-dymo-21 Dynamic MANET On-demand (DYMO) Routing
  *
  */
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -115,7 +73,7 @@
 // default settings from draft-ietf-manet-dymo-21.txt
 #define DISCOVERY_ATTEMPTS_MAX 3
 
-
+// signal
 volatile sig_atomic_t keep_running = 0;
 
 // application state
@@ -160,6 +118,7 @@ struct yamir_state {
     uint8_t recv_pool[];
 };
 
+// route discovery
 struct dymo_req {
     struct list_elem node;
     void *parent;
