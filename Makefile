@@ -168,8 +168,8 @@ attach:
 detach:
 	virsh detach-device $(VM_NAME) scripts/realtek_8192.xml --live
 
-# tags file
-# ----------
+# tags
+# ----
 .PHONY: tags
 SOURCES = $(wildcard yamir/*.c yamir/*.h include/*.h)
 tags: $(SOURCES)
@@ -182,3 +182,9 @@ tags: $(SOURCES)
 clean: 
 	rm -fr $(BUILD_DIR) $(YAMIR) $(TEST_RUNNER)
 	$(MAKE) -C $(KYAMIR_DIR) KERNELDIR=$(KDIR) KCC=$(CC) clean
+
+# spotless
+# --------
+.PHONY: spotless
+spotless: vm-clean clean
+	rm -fr $(VM_DIR)
