@@ -87,6 +87,7 @@ static void pbb_ab_reset(struct pbb_ab *ab)
     ab->head_len = 0;
     ab->tail_len = 0;
     ab->mid_len = 0;
+    ab->head = NULL;
 }
 
 /*  decoders */
@@ -813,19 +814,19 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
     if (pbb_node_skip(mn)) return false;
 
     if (ab->num_addr == 0)  {
-        // alwas compress first addr
+        // first addr
         ab->head_len = 0;
         ab->tail_len = 0;
         ab->mid_len = ab->addr_len;
+        ab->head = mn->addr;
     }
     else {
         if (!compat_prefix(ab, mn)) return false;
-        uint8_t *addr = ab->nodes[0]->addr;
 
         // find common prefix (head)
         int head_len = ab->head_len;
         while (head_len > 0) {
-            if (memcmp(addr, mn->addr, head_len) == 0) break;
+            if (memcmp(ab->head, mn->addr, head_len) == 0) break;
             head_len--;
         }
 
@@ -833,7 +834,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
         int tail_len = ab->tail_len;
         while (tail_len > 0) {
             int idx = ab->addr_len - tail_len;
-            if (memcmp(addr + idx, mn->addr + idx, tail_len) == 0) break;
+            if (memcmp(ab->head + idx, mn->addr + idx, tail_len) == 0) break;
             tail_len--;
         }
 
@@ -856,7 +857,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 
         if (ab->tail_len > 0) {
             int nzero = 0;
-            uint8_t *tail = addr + ab->addr_len - ab->tail_len;
+            uint8_t *tail = ab->head + ab->addr_len - ab->tail_len;
             for (int i = 0; i > ab->tail_len; i++) {
                 if (tail[i] != 0) break;
                 nzero++;
