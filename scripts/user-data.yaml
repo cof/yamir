@@ -2,20 +2,15 @@
 hostname: {{VM_NAME}}
 datasource_list: [ NoCloud ]
 
-apk_repos:
-  preserve_repositories: false
-  alpine_repo:
-    base_url: https://dl-cdn.alpinelinux.org/alpine
-    version: edge
-    community_enabled: true
-    testing_enabled: true
-
+# use lts for kernel modules
 packages:
+  - alpine-sdk
+  - linux-lts
+  - linux-lts-dev
   - linux-firmware-rtlwifi
   - wireless-tools
   - wireless-regdb
   - bridge-utils
-  - alpine-sdk
   - akms
   - zstd
   - libcap-setcap
@@ -32,6 +27,10 @@ ssh_pwauth: true
 
 # XXX alpine is ignore this
 write_files:
+  - path: /etc/ssh/sshd_config
+    permissions: '0600'
+    content: |
+      Port 2222
   - path: /etc/ssh/sshd_config.d/00-force-passwords.conf
     permissions: '0600'
     content: |
@@ -50,10 +49,11 @@ runcmd:
   - chown alpine:alpine /home/alpine/.profile
   - truncate -s 0 /etc/motd
   - ln -sf /usr/bin/doas /usr/bin/sudo
-  - apk update
-  - apk add linux-openpax linux-openpax-dev
-  - sleep 2
-  - mkinitfs -o /boot/initramfs-openpax $(ls /lib/modules | grep openpax)
-  - sed -i 's/default=virt/default=openpax/' /etc/update-extlinux.conf
+  - touch /etc/alpine_ready
+  - KVER=$(ls -1 /lib/modules | grep "lts" | sort -V | tail -n 1) && depmod -a $KVER && mkinitfs -o /boot/initramfs-lts $KVER
+  - sed -i 's/^timeout.*/timeout 2/' /etc/update-extlinux.conf
+  - sed -i 's/^default=.*/default=lts/' /etc/update-extlinux.conf
+  - sed -i 's/Port 2222/Port 22/' /etc/ssh/sshd_config
   - update-extlinux
-
+  - sync
+  - reboot -f

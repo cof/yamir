@@ -130,14 +130,18 @@ TEST_FILES = tests/rfc5444_core.txt
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER) $(TEST_FILES)
 
-# VM for testing kyamir
-# -------------------
-VM_NAME = test-kyamir
+# VM for testing yamir
+# --------------------
+VM_NAME = test-yamir
 VM_RESIZE = 1G
+VM_REBOOT = 1
 include scripts/build_vm.mk
 build-vm: vm-create
-.PHONY: test-kyamir
-test-kyamir: $(YAMIR) build-vm
+
+# run router tests
+# ----------------
+.PHONY: test-yamir
+test-yamir: $(YAMIR) build-vm
 	$(Q)echo "[+] Running $@"; \
 	echo "[Installing files]"; \
 	VM_IP=$$($(VM_GET_IP)); \
@@ -150,6 +154,16 @@ test-kyamir: $(YAMIR) build-vm
 	echo " => Setting cap $(YAMIR)"; \
 	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "doas setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep $(YAMIR)"; \
 	echo "$@ complete."
+
+# usb wifi
+# --------
+.PHONY: attach
+attach:
+	virsh attach-device $(VM_NAME) scripts/realtek_8192.xml --live
+
+.PHONY: detach
+detach:
+	virsh detach-device $(VM_NAME) scripts/realtek_8192.xml --live
 
 # tags file
 # ----------

@@ -12,6 +12,7 @@
 #  VM_CPUS     : virt-install --vcpus (default 1)
 #  VM_GRAPHICS : virt-install --graphics (default none)
 #  VM_CONSOLE  : virt-install --console (default pty,target_type=serial)
+#  VM_REBOOT   : wait for vm to reboot/poweroff after first install
 #
 # Example
 # -------
@@ -65,6 +66,10 @@ VM_USER := alpine
 VM_HOME := /home/$(VM_USER)
 VM_BIN_DIR := /home/$(VM_USER)/bin
 
+# boot time
+VM_WAIT_RETRIES = 30
+VM_WAIT_SLEEP   = 3
+VM_WAIT_TIMEOUT = $(shell expr $(VM_WAIT_RETRIES) \* $(VM_WAIT_SLEEP))
 
 # alpine linux image file
 # -----------------------
@@ -95,7 +100,9 @@ VM_DISK = $(VM_DIR)/$(VM_FILE)
 # autoconfigure using user-data.yaml
 # ---------------------------------
 VM_USER_DATA = $(BUILD_DIR)/user-data.yaml
+VM_META_DATA = $(BUILD_DIR)/meta-data
 VM_DONE      = $(BUILD_DIR)/.vm_done
+
 
 # get public key
 # --------------
@@ -127,6 +134,12 @@ $(VM_USER_DATA): $(USER_DATA_TEMPLATE) | $(BUILD_DIR)
 	$(Q)sed -e "s|{{VM_NAME}}|$(VM_NAME)|g" \
 	        -e "s|{{SSH_PUBLIC_KEY}}|$(VM_SSH_PUBKEY)|g" \
 	        $< > $@
+
+# create meta-data
+# ----------------
+$(VM_META_DATA): | $(BUILD_DIR) 
+	$(Q)echo "instance-id: $$(date +%s)" > $(VM_META_DATA)
+	$(Q)echo "local-hostname: $(VM_NAME)" >> $(VM_META_DATA)
 
 $(VM_CACHE_DIR):
 	$(Q)mkdir -p $@
@@ -166,6 +179,7 @@ vm-config:
 	@echo "VM_BASE_IMAGE=$(VM_CACHE_FILE)"
 	@echo "VM_RUN_IMAGE=$(VM_DISK)"
 	@echo "VM_USER_DATA=$(VM_USER_DATA)"
+	@echo "VM_META_DATA=$(VM_META_DATA)"
 	@echo "VM_PUB_KEYFILE=$(VM_PUB_KEYFILE)"
 
 .PHONY:vm-cache
@@ -175,9 +189,13 @@ vm-cache:
 # install vm image
 # ----------------
 .PHONY:vm-install
-vm-install: $(VM_DISK) $(VM_USER_DATA)
+vm-install: $(VM_DISK) $(VM_USER_DATA) $(VM_META_DATA)
 	$(Q)echo "[+] Installing VM: $(VM_NAME)"
-	$(Q)virt-install --quiet --noautoconsole --noreboot \
+	$(Q)virt-install \
+	--quiet \
+	--noautoconsole \
+	--boot hd,menu=off \
+	--cloud-init user-data=$(VM_USER_DATA),meta-data=$(VM_META_DATA) \
 	--name $(VM_NAME) \
 	--virt-type kvm \
 	--ram $(VM_RAM) \
@@ -186,16 +204,34 @@ vm-install: $(VM_DISK) $(VM_USER_DATA)
 	--console $(VM_CONSOLE) \
 	--disk path=$(VM_DISK),format=qcow2,bus=virtio \
 	--network network=default,model=virtio \
-	--cloud-init user-data=$(VM_USER_DATA) \
 	--os-variant $(OS_VARIANT) \
 	--rng /dev/urandom \
 	--import
 	$(Q)echo "[+] Started VM: $(VM_NAME)"
 
+# wait for vm poweroff (after first install)
+# --------------------
+.PHONY:vm-poweroff
+vm-poweroff:
+	$(Q)[ "$(VM_REBOOT)" != "1" ] && exit 0; \
+	echo "[+] Waiting for $(VM_NAME) poweroff"; \
+	@count=0; \
+	while [ $$count -lt $(VM_WAIT_RETRIES) ]; do \
+		if ! virsh list --name | grep -q "^$(VM_NAME)$$"; then \
+			echo "VM shutdown after $$((count * $(VM_WAIT_SLEEP)))s."; \
+			exit 0; \
+		fi; \
+		count=$$((count + 1)); \
+		sleep $(VM_WAIT_SLEEP); \
+		echo " ... still waiting ($$count/$(VM_WAIT_RETRIES))"; \
+	done; \
+	echo " [ERROR] VM failed to power off after $(VM_WAIT_TIMEOUT) seconds"; \
+	exit 1
+	
 # ensure vm exists
 # ----------------
 $(VM_DONE): | $(BUILD_DIR)
-	$(Q)virsh -q dominfo $(VM_NAME) >/dev/null 2>&1 || $(MAKE) vm-install
+	$(Q)virsh -q dominfo $(VM_NAME) >/dev/null 2>&1 || $(MAKE) vm-install vm-poweroff
 	$(Q)touch $@
 
 .PHONY:vm-create
@@ -210,9 +246,6 @@ vm-start:
 
 # wait for ssh access
 # -------------------
-VM_WAIT_RETRIES = 30
-VM_WAIT_SLEEP   = 3
-VM_WAIT_TIMEOUT = $(shell expr $(VM_WAIT_RETRIES) \* $(VM_WAIT_SLEEP))
 .PHONY:vm-wait
 vm-wait:
 	$(Q)echo "[+] Waiting for VM $(VM_NAME) to reach SSH"
