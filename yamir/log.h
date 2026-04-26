@@ -114,13 +114,14 @@ void log_argv(const char *what, int argc, char *argv[]);
  * fatal_errno(...)         : log fatal error msg and errno and exit
  */
 
+#define LOG_FAIL -1
 
 #define log_msg(...) \
     _log_msg(NULL, 0, NULL, 0, LOG_NONE, 0, __VA_ARGS__)
 
 #define log_msg_rf(...) ({ \
     _log_msg(NULL, 0, NULL, 0, LOG_NONE, 0, __VA_ARGS__) \
-    -1; \
+    LOG_FAIL; \
 })
 
 #define log_info(who, ...) \
@@ -131,7 +132,6 @@ void log_argv(const char *what, int argc, char *argv[]);
     (rc); \
 })
 
-#define LOG_FAIL -1
 
 #define log_cmd_err(cmd, opt, ...) ({ \
     _log_msg(cmd, 0, opt, 0, LOG_NONE, "ERROR", __VA_ARGS__); \
@@ -204,6 +204,12 @@ void log_argv(const char *what, int argc, char *argv[]);
         _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
     } \
     (ec); \
+})
+
+#define log_errno_rv(...) ({ \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
 })
 
 #define log_errno_rn(...) ({ \

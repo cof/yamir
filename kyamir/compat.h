@@ -16,6 +16,26 @@
 #define pr_info(fmt, ...) printk(KERN_INFO fmt, ##__VA_ARGS__)
 #endif
 
+#ifndef pr_warn
+#define pr_warn(fmt, ...) printk(KERN_WARNING fmt, ##__VA_ARGS__)
+#endif
+
+#ifndef pr_debug
+#ifdef DEBUG
+#define pr_debug(fmt, ...) \
+        printk(KERN_DEBUG fmt, ##__VA_ARGS__)
+#else
+#define pr_debug(fmt, ...) \
+        do { } while (0)
+#endif
+#endif
+
+
+
+
+
+
+
 /**
  * kyamir_get_net - Safely retrieves the net pointer.
  */

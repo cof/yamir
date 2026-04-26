@@ -9,18 +9,17 @@
 #define NETLINK_YAMIR NETLINK_USERSOCK
 #define NETLINK_YAMIR_GROUP 1
 
-// messages kernel sends to us
-#define YAMIR_ROUTE_NEED 0
-#define YAMIR_ROUTE_INUSE 1
-#define YAMIR_ROUTE_ERR 2
+// recv from kyamir
+#define YAMIR_RT_NEED  0
+#define YAMIR_RT_INUSE 1
+#define YAMIR_RT_ERR   2
+// sent to kyamir
+#define YAMIR_RT_NONE 3
+#define YAMIR_RT_ADD  4
+#define YAMIR_RT_DEL  5
 
 // rtm_protocol - See /usr/include/linux/rtnetlink.h
 #define YAMIR_RTNETLINK 30
-
-// message we send to kernel
-#define YAMIR_ROUTE_NOTFOUND 3
-#define YAMIR_ROUTE_ADD 4
-#define YAMIR_ROUTE_DEL 5
 
 // addess taken from iphdr 
 struct yamir_msg {

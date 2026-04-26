@@ -1,6 +1,12 @@
 /*
  * Yet Another Manet IP Router (YAMIR)
  * kyamir - kernel space yamir module
+ * ----------------------------------
+ * Intercepts IP packets via netfilter hooks for userspace route discovery.
+ *
+ * NF_INET_PRE_ROUTING  : packet has arrived before routing decision
+ * NF_INET_LOCAL_OUT    : local socket sending packet before routing decision
+ * NF_INET_POST_ROUTING : packet sent after routing decision
  */
 #include <linux/version.h>
 #include <linux/module.h>
@@ -44,7 +50,7 @@ static unsigned int route_total;
 struct queue_packet {
     struct list_head list;
     struct sk_buff   *skb;
-    struct net *net; // namesapce pkt came from
+    struct net *net; // namespace pkt came from
     __be32 addr;
     int  (*okfn)(struct sk_buff *);
 };
@@ -143,7 +149,7 @@ static int route_add(uint32_t addr)
 
     struct route_entry *entry = kmalloc(sizeof(*entry), GFP_ATOMIC);
     if (!entry) {
-        printk(KERN_ERR "kyamir: OOM in route_add()\n");
+        pr_err("kyamir: OOM in route_add()\n");
         return -ENOMEM;
     }
 
@@ -155,7 +161,7 @@ static int route_add(uint32_t addr)
 
     int rc = 0;
     if (route_total >= ROUTE_MAX_LEN) {
-        printk(KERN_WARNING "kyamir: max list length reached\n");
+        pr_warn("kyamir: max list length reached\n");
         kfree(entry);
         rc = -ENOSPC;
     }
@@ -236,7 +242,7 @@ static int enqueue_packet(
     struct queue_packet *pkt = kmalloc(sizeof(*pkt), GFP_ATOMIC);
 
     if (!pkt) {
-        printk(KERN_ERR "kyamir: OOM in enqueue_packet()\n");
+        pr_err("kyamir: OOM in enqueue_packet()\n");
         return -ENOMEM;
     }
 
@@ -250,7 +256,7 @@ static int enqueue_packet(
 
     int rc = 0;
     if (queue_total >= QUEUE_MAX_LEN) {
-        printk(KERN_WARNING "kyamir: max packet queue length reached\n");
+        pr_warn("kyamir: max packet queue length reached\n");
         kfree(pkt);
         pkt = NULL;
         rc = -ENOSPC;
@@ -270,12 +276,24 @@ static void queue_drop(uint32_t addr)
     struct queue_packet *pkt;
     int num_drop = 0;
 
+    pr_debug("kyamir:drop addr=%pI4\n", &addr);
+
     while ( (pkt = dequeue_packet(addr)) != NULL) {
-        if (num_drop++ == 0) {
-            // tell application that dest unreachable
-            icmp_send(pkt->skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);
-        }
+        // tell application that dest unreachable
         if (pkt->skb) {
+            if (pkt->skb->sk)  {
+                // local socket
+                pkt->skb->sk->sk_err = EHOSTUNREACH;
+                pkt->skb->sk->sk_error_report(pkt->skb->sk);
+            }
+            else if (num_drop++ == 0) { 
+                // send ICMP message
+                if (pkt->net) pkt->skb->dev = pkt->net->loopback_dev;
+                skb_reset_network_header(pkt->skb);
+                skb_set_transport_header(pkt->skb, ip_hdrlen(pkt->skb));
+                skb_dst_drop(pkt->skb);
+                icmp_send(pkt->skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);
+            }
             kfree_skb(pkt->skb);
             pkt->skb = NULL;
         }
@@ -337,23 +355,25 @@ static int queue_init(void)
     return 0;
 }
 
-
-// recv msg from userpace router
-static int netlink_recv_msg(int type, void *data, int len)
+// receive msg from userpace
+static int yamir_recv_msg(int type, void *data, int len)
 {
     struct yamir_msg *msg = (struct yamir_msg *) data;
     if (len < sizeof(*msg)) return -EINVAL;
     int rc = 0;
 
+    pr_debug("kyamir:recv type=%d addr=%pI4 ifindex=%d\n", type, &msg->addr, msg->ifindex);
+
     switch(type) {
-    case YAMIR_ROUTE_NOTFOUND:
+    case YAMIR_RT_NONE:
+        // no route for addr
         queue_drop(msg->addr);
         break;
-    case YAMIR_ROUTE_ADD:
+    case YAMIR_RT_ADD:
         route_add(msg->addr);
         queue_send(msg->addr);
         break;
-    case YAMIR_ROUTE_DEL:  
+    case YAMIR_RT_DEL:  
         route_del(msg->addr);
         queue_drop(msg->addr);
         break;
@@ -402,7 +422,7 @@ static void netlink_recv_skb(struct sk_buff *skb)
     }
     peer_pid = pid;
 
-    rc = netlink_recv_msg(type, nlmsg_data(nlh), nlmsg_len(nlh));
+    rc = yamir_recv_msg(type, nlmsg_data(nlh), nlmsg_len(nlh));
     if (rc < 0) RCV_SKB_FAIL(rc);
 
     // final ack
@@ -447,8 +467,11 @@ static struct sk_buff *netlink_build_msg(int type, struct yamir_msg *msg)
     return skb;
 }
 
-static int netlink_send_msg(int type, __be32 addr, int ifindex)
+// send msg to userspace
+static int yamir_send_msg(int type, __be32 addr, int ifindex)
 {
+    pr_debug("kyamir:send type=%d addr=%pI4 ifindex=%d\n", type, &addr, ifindex);
+
     struct yamir_msg msg = { 
         .addr = addr,
         .ifindex = ifindex
@@ -498,7 +521,7 @@ static int kyamir_netlink_init(void)
 
     netlink_sock = kyamir_netlink_kernel_create(kyamir_recv_skb);
     if (netlink_sock == NULL) {
-        printk(KERN_ERR "kyamir: netlink_init() failed to create netlink socket\n");
+        pr_err("kyamir: netlink_init() failed to create netlink socket\n");
         netlink_unregister_notifier(&kyamir_netlink_notifier);
         return -1;
     }
@@ -536,14 +559,14 @@ static unsigned int do_kyamir_nf(struct net *net,
     // accept if not skb
     if (!skb) return rc;
 
-    // accept if not an ip packet or broadcast/multicast or udp dymo packet
+    // accept if not valid IPv4 packet, broadcast/multicast
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
     struct iphdr *iph = ip_hdr(skb);
-    if (iph->version != 4) return rc;
-    if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) {
-        return rc;
-    }
+    if (iph->version != 4 || iph->ihl < 5) return rc;
+    if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) return rc;
+    if (!pskb_may_pull(skb, iph->ihl * 4)) return rc;
 
+    // accept if UDP DYMO packet
     if (iph->protocol == IPPROTO_UDP) {
         int ip_len = iph->ihl * 4;
         if (!pskb_may_pull(skb, ip_len + sizeof(struct udphdr))) return rc;
@@ -563,15 +586,15 @@ static unsigned int do_kyamir_nf(struct net *net,
         // ignore broadcasts
         if (iph->daddr == device->broadcast) return rc;
 
-        // tell userpace that this route is in use
-        netlink_send_msg(YAMIR_ROUTE_INUSE, iph->saddr, in->ifindex);
+        yamir_send_msg(YAMIR_RT_INUSE, iph->saddr, in->ifindex);
+
         // accept if ip packet sent from or to this node
         if (iph->saddr == device->address || iph->daddr == device->address) break;
         // accept if incoming packet is routable 
         if (route_exists(iph->daddr)) break;
 
         // drop packets which we cannot route
-        netlink_send_msg(YAMIR_ROUTE_ERR, iph->daddr, in->ifindex);
+        yamir_send_msg(YAMIR_RT_ERR, iph->daddr, in->ifindex);
         rc = NF_DROP;
         break;
 
@@ -594,7 +617,7 @@ static unsigned int do_kyamir_nf(struct net *net,
         }
 
         if (!entry_found) {
-            netlink_send_msg(YAMIR_ROUTE_NEED, iph->daddr, out->ifindex);
+            yamir_send_msg(YAMIR_RT_NEED, iph->daddr, out->ifindex);
         }
 
         // tell netfilter we will take it from here
@@ -610,7 +633,7 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (iph->daddr == device->broadcast) return rc;
 
         // tell userspace that this route is in use
-        netlink_send_msg(YAMIR_ROUTE_INUSE, iph->daddr, out->ifindex);
+        yamir_send_msg(YAMIR_RT_INUSE, iph->daddr, out->ifindex);
         break;
     }
 
@@ -677,7 +700,7 @@ static void load_devices(void)
     for (int i = 0; ifnames[i]; i++) {
 
         if (num_device >= ARRAY_SIZE(dymo_devices)) {
-            printk(KERN_INFO "kyamir: Reached device limit %d\n", MAX_DEVICE);
+            pr_info("kyamir: Reached device limit %d\n", MAX_DEVICE);
             break;
         }
 
@@ -688,7 +711,7 @@ static void load_devices(void)
 
         ndev = dev_get_by_name(&init_net, name);
         if (!ndev) {
-            printk(KERN_INFO "kyamir: No such network device %s\n", name);
+            pr_info("kyamir: No such network device %s\n", name);
             continue;
         }
         if (cp) *cp = ':';
@@ -707,7 +730,7 @@ static void load_devices(void)
                     ddev->mask = ifa->ifa_mask;
                     ddev->broadcast = ifa->ifa_broadcast;
                     strscpy(ddev->ifname, name, sizeof(ddev->ifname));
-                    printk(KERN_INFO "kyamir: Adding device %s idx=%d\n", name, ddev->ifindex);
+                    pr_info("kyamir: Adding device %s idx=%d\n", name, ddev->ifindex);
                     break;
                 }
             }
@@ -732,7 +755,7 @@ static int kyamir_netfilter_init(void)
 {
     load_devices();
     if (num_device == 0) {
-        printk(KERN_ERR "kyamir: No valid interfaces found. Aborting.\n");
+        pr_err("kyamir: No valid interfaces found. Aborting.\n");
         return -ENODEV;
     }
 
@@ -741,7 +764,7 @@ static int kyamir_netfilter_init(void)
     for (i = 0; i < ARRAY_SIZE(kyamir_hook_ops); i++) {
         rc = kyamir_register_nf_hook(net, &kyamir_hook_ops[i]);
         if (rc < 0) {
-            printk(KERN_ERR "kyamir: Failed to register hook %d\n", i);
+            pr_err("kyamir: Failed to register hook %d\n", i);
             break;
         }
     }
@@ -777,7 +800,7 @@ static int __init dymo_init(void)
     }
 
     if (i == ARRAY_SIZE(inits)) {
-        printk(KERN_INFO "kyamir: DYMO module loaded!\n");
+        pr_info("kyamir: DYMO module loaded\n");
         return rc;
     }
 
@@ -798,7 +821,7 @@ static void __exit dymo_exit(void)
         inits[i].deinit_fn();
     }
 
-    printk(KERN_INFO "kyamir: DYMO module unloaded!\n");
+    pr_info("kyamir: DYMO module unloaded!\n");
 }
 
 module_init(dymo_init);
@@ -806,4 +829,4 @@ module_exit(dymo_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Cyril O'Floinn");
-MODULE_DESCRIPTION("Supports yamir routing");
+MODULE_DESCRIPTION("Intercepts IP packets via Nefilter hooks for userspace route discovery");

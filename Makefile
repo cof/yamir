@@ -1,11 +1,14 @@
 #
 # Yet Another Manet IP Router (YAMIR)
 # 
-# yamird : user-space router
-# kyamir : kernel-space module
-# test_runner : test runner
+# Targets
+# ------
+# all        : build yamid, kyamir
+# yamird     : user-space router
+# kyamir     : kernel-space module
+# test       : run packetbb tests
+# test-yamir : build VM for test
 #
-
 YAMIR  = yamird
 KYAMIR_DIR = kyamir
 BUILD_DIR = build
@@ -151,7 +154,7 @@ test-yamir: $(YAMIR) build-vm
 	scp -q $(VM_SSH_OPTS) -r $(KYAMIR_DIR) include yamird $$VM_SSH_ADDR:$(VM_HOME);  \
 	echo " => Building $(KYAMIR_DIR)"; \
 	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "cd kyamir; make"; \
-	echo " => Setting cap $(YAMIR)"; \
+	echo " => Running setcap $(YAMIR)"; \
 	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "doas setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep $(YAMIR)"; \
 	echo "$@ complete."
 
