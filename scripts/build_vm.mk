@@ -2,7 +2,7 @@
 # VM Provisioning Module
 # ======================
 #
-# A makefile fragment for creating a VM. 
+# A makefile fragment for creating a VM.
 #
 # Simply include this file setting any of the following variables:
 #
@@ -37,8 +37,8 @@
 # - Injects SSH public key into cloud-config file for passwordless VM access
 # - Runs to virt-install to create VM
 # - Uses virsh to manage VM
-# - VM can be accessed via ssh key or alpine:alpine or console root:alpine 
-# - ssh directly to VM with ssh alpine@VM_NAME if nsswitch.conf allows it 
+# - VM can be accessed via ssh key or alpine:alpine or console root:alpine
+# - ssh directly to VM with ssh alpine@VM_NAME if nsswitch.conf allows it
 # - Add libvirt_guest to hosts line in /etc/nsswitch.conf e.g "hosts: files libvirt_guest"
 #
 # Dependencies
@@ -47,7 +47,7 @@
 # - qemu-img     : resize disk image
 # - virt-install : create vm
 # - virsh        : vm management
-# 
+#
 
 # whats our location
 SCRIPT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
@@ -137,7 +137,7 @@ $(VM_USER_DATA): $(USER_DATA_TEMPLATE) | $(BUILD_DIR)
 
 # create meta-data
 # ----------------
-$(VM_META_DATA): | $(BUILD_DIR) 
+$(VM_META_DATA): | $(BUILD_DIR)
 	$(Q)echo "instance-id: $$(date +%s)" > $(VM_META_DATA)
 	$(Q)echo "local-hostname: $(VM_NAME)" >> $(VM_META_DATA)
 
@@ -215,7 +215,7 @@ vm-install: $(VM_DISK) $(VM_USER_DATA) $(VM_META_DATA)
 vm-poweroff:
 	$(Q)[ "$(VM_REBOOT)" != "1" ] && exit 0; \
 	echo "[+] Waiting for $(VM_NAME) poweroff"; \
-	@count=0; \
+	count=0; \
 	while [ $$count -lt $(VM_WAIT_RETRIES) ]; do \
 		if ! virsh list --name | grep -q "^$(VM_NAME)$$"; then \
 			echo "VM shutdown after $$((count * $(VM_WAIT_SLEEP)))s."; \
