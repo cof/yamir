@@ -24,7 +24,8 @@
  *
  * Refs
  * ----
- * draft-ietf-manet-dymo-21 Dynamic MANET On-demand (DYMO) Routing
+ * draft-ietf-manet-dymo-21 - Dynamic MANET On-demand (DYMO) Routing
+ * man 7 rtnetlink - Linux IPv4 routing socket
  *
  */
 #include <stdint.h>

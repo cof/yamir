@@ -31,11 +31,6 @@
 #endif
 
 
-
-
-
-
-
 /**
  * kyamir_get_net - Safely retrieves the net pointer.
  */
