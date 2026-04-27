@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="device_entries">
+        <item>None</item>
+        <item>HTC Desire</item>
+        <item>Samsung S2</item>
+    </string-array>
+    <string-array name="device_values">
+        <item>none</item>
+        <item>htc_desire</item>
+        <item>samsung_s2</item>
+    </string-array>
+    
+</resources>

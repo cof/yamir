@@ -1,0 +1,45 @@
+#!/system/bin/sh
+
+# htc-desire gt-i9100
+
+# this causes script to exit if any non-zero status returned
+
+# defaults 
+: ${YAMIR_INTERFACE:="eth0"}
+: ${YAMIR_SSID:="yamir"}
+: ${YAMIR_CHANNEL:="6"}
+: ${YAMIR_IP_ADDR:="192.168.1.12"}
+: ${YAMIR_NETMASK:="255.255.255.0"}
+
+stop()
+{
+    rmmod bcm4329
+    setprop wlan.driver.status "unloaded"
+}
+
+start() 
+{
+    # 0. turn off normal wifi
+    svc wifi disable
+    sleep 1
+
+    # 1. start the wifi interface
+    insmod /system/lib/modules/bcm4329.ko "firmware_path=/data/local/yamir/fw_bcm4329.bin"
+    setprop wlan.driver.status "ok"
+    #insmod /system/lib/modules/bcm4329.ko "firmware_path=/system/etc/firmware/fw_bcm4329.bin"
+    #insmod /system/lib/modules/bcm4329.ko "firmware_path=/etc/firmware/fw_bcm4329_apsta.bin"
+    #insmod /system/lib/modules/bcm4329.ko
+
+    sleep 1
+
+    # 2. configure it
+    netcfg $YAMIR_INTERFACE down
+    ./iwconfig $YAMIR_INTERFACE mode ad-hoc essid $YAMIR_SSID channel $YAMIR_CHANNEL power off commit
+    netcfg $YAMIR_INTERFACE down
+    #./iwconfig $YAMIR_INTERFACE ap 02:ca:ff:ee:ba:be
+    netcfg $YAMIR_INTERFACE down
+    # 3. assign ip address to it
+    ifconfig $YAMIR_INTERFACE $YAMIR_IP_ADDR netmask $YAMIR_NETMASK up
+}
+
+$1

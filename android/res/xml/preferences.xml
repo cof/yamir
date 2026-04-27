@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android" >
+    <ListPreference
+        android:title="Device"
+        android:defaultValue="none"
+        android:key="device"
+        android:entries="@array/device_entries"
+        android:entryValues="@array/device_values"
+        />
+    <EditTextPreference 
+        android:summary="Network interface" 
+        android:defaultValue="eth0" 
+        android:title="Interface" 
+        android:key="interface"/>
+    <EditTextPreference 
+        android:summary="Network name" 
+        android:defaultValue="yamir" 
+        android:title="SSID" 
+        android:key="ssid"/>
+    <EditTextPreference 
+        android:defaultValue="6" 
+        android:title="Channel" 
+        android:key="channel"
+        android:numeric="integer"
+           android:inputType="number"/>
+    <EditTextPreference 
+        android:summary="IP4 address" 
+        android:title="IP Address" 
+        android:key="ip_addr" 
+        android:inputType="numberDecimal" 
+        android:digits="0123456789." android:defaultValue="192.168.1.10"/>
+    <EditTextPreference 
+        android:summary="Network mask" 
+        android:title="Netmask" 
+        android:key="netmask" 
+        android:inputType="numberDecimal"
+        android:digits="0123456789." android:defaultValue="255.255.255.0"/>
+    
+    
+
+</PreferenceScreen>

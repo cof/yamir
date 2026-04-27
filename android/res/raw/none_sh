@@ -1,0 +1,15 @@
+#!/system/bin/sh
+
+# script do nothing
+
+stop() 
+{
+
+}
+
+start()
+{
+
+}
+
+$1

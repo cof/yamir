@@ -1,0 +1,67 @@
+#!/system/bin/sh
+
+# assume config file 2nd arg
+cd ${2:-.}
+
+# load config
+echo "loading config"
+. ./yamir.cfg
+
+# defaults
+: ${YAMIR_DEVICE:="none"}
+
+YAMIR_KERNEL="kyamir_$YAMIR_DEVICE.ko"
+
+echo "YAMIR_KERNEL="$YAMIR_KERNEL
+echo "YAMIR_DEVICE="$YAMIR_DEVICE
+echo "YAMIR_INTERFACE="$YAMIR_INTERFACE
+echo "YAMIR_SSID="$YAMIR_SSID
+echo "YAMIR_CHANNEL="$YAMIR_CHANNEL
+echo "YAMIR_IP_ADDR="$YAMIR_IP_ADDR
+echo "YAMIR_NETMASK="$YAMIR_NETMASK
+
+export YAMIR_KERNEL
+export YAMIR_DEVICE
+export YAMIR_INTERFACE
+export YAMIR_SSID
+export YAMIR_CHANNEL
+export YAMIR_IP_ADDR
+export YAMIR_NETMASK
+
+stop() 
+{
+    echo "Stopping daemon"
+    ./killall yamird
+    
+    # 1. unload netfilter
+    echo "removing netfilter"
+    rmmod kyamir
+
+    # 2. stop ad-hoc
+    echo "Stopping ad-hoc"
+    ./$YAMIR_DEVICE.sh stop
+
+    echo "System stopped"
+    setprop yamir.service stopped
+}
+
+start() 
+{
+    # 1. start ad-hoc wifi
+    echo "starting ad-hoc"
+    ./$YAMIR_DEVICE.sh start
+
+    # 2. load netfilter module
+    echo "adding netfilter"
+    insmod $YAMIR_KERNEL ifnames=$YAMIR_INTERFACE
+    lsmod
+
+    # 3. start router
+    echo "Starting daemon"
+    ./yamird -d $YAMIR_INTERFACE
+
+    echo "System started"
+    setprop yamir.service started
+}
+
+$1
