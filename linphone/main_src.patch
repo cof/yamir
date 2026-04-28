@@ -1,0 +1,52 @@
+diff --git a/src/org/linphone/LinphoneManager.java b/src/org/linphone/LinphoneManager.java
+index 406110e..2e1d6e8 100644
+--- a/src/org/linphone/LinphoneManager.java
++++ b/src/org/linphone/LinphoneManager.java
+@@ -721,7 +721,8 @@ public final class LinphoneManager implements LinphoneCoreListener {
+ 			
+ 			//init network state
+ 			NetworkInfo networkInfo = mConnectivityManager.getActiveNetworkInfo();
+-			mLc.setNetworkReachable(networkInfo !=null? networkInfo.getState() == NetworkInfo.State.CONNECTED:false); 
++			//mLc.setNetworkReachable(networkInfo !=null? networkInfo.getState() == NetworkInfo.State.CONNECTED:false); 
++			mLc.setNetworkReachable(true);
+ 		} catch (LinphoneCoreException e) {
+ 			throw new LinphoneConfigException(getString(R.string.wrong_settings),e);
+ 		}
+@@ -851,11 +852,11 @@ public final class LinphoneManager implements LinphoneCoreListener {
+ 
+ 		if (eventInfo.getState() == NetworkInfo.State.DISCONNECTED) {
+ 			Log.i(eventInfo.getTypeName()," disconnected: setting network unreachable");
+-			mLc.setNetworkReachable(false);
++			//mLc.setNetworkReachable(false);
+ 		} else if (eventInfo.getState() == NetworkInfo.State.CONNECTED){
+ 			manageTunnelServer(activeInfo);
+ 			Log.i(eventInfo.getTypeName()," connected: setting network reachable");
+-			mLc.setNetworkReachable(true);
++			//mLc.setNetworkReachable(true);
+ 		}
+ 	}
+ 
+diff --git a/src/org/linphone/NetworkManager.java b/src/org/linphone/NetworkManager.java
+index 9714cea..6a81f6e 100644
+--- a/src/org/linphone/NetworkManager.java
++++ b/src/org/linphone/NetworkManager.java
+@@ -48,15 +48,15 @@ public class NetworkManager extends BroadcastReceiver {
+ 			return;
+ 		}
+ 		
+-		
+-		if (lNoConnectivity | ((lNetworkInfo.getState() == NetworkInfo.State.DISCONNECTED) /*&& !lIsFailOver*/)) {
++	/*
++		if (lNoConnectivity | ((lNetworkInfo.getState() == NetworkInfo.State.DISCONNECTED))) {
+ 			LinphoneManager.getLc().setNetworkReachable(false);
+ 		} else if (lNetworkInfo.getState() == NetworkInfo.State.CONNECTED){
+ 			 LinphoneManager.getLc().setNetworkReachable(true);
+ 		} else {
+-			 // Other unhandled events
++			 //Other unhandled events
+ 		}
+-
++*/
+ 		NetworkInfo eventInfo = (NetworkInfo) intent.getParcelableExtra(ConnectivityManager.EXTRA_NETWORK_INFO);
+ 		ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+ 		LinphoneManager.getInstance().connectivityChanged(eventInfo, cm);
