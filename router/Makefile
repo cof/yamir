@@ -159,7 +159,7 @@ test-yamir: $(YAMIR) build-vm
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
 	echo " => Copying $(KYAMIR_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
-	scp -q $(VM_SSH_OPTS) -r $(KYAMIR_DIR) include yamird $$VM_SSH_ADDR:$(VM_HOME);  \
+	scp -q $(VM_SSH_OPTS) -r $(KYAMIR_DIR) include yamird scripts/create_manet.sh $$VM_SSH_ADDR:$(VM_HOME);  \
 	echo " => Building $(KYAMIR_DIR)"; \
 	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "cd kyamir; make"; \
 	echo " => Running setcap $(YAMIR)"; \
@@ -188,7 +188,7 @@ tags: $(SOURCES)
 # -----
 .PHONY: clean
 clean: 
-	rm -fr $(BUILD_DIR) $(YAMIR) $(TEST_RUNNER)
+	rm -fr $(BUILD_DIR) tags $(YAMIR) $(TEST_RUNNER)
 	$(MAKE) -C $(KYAMIR_DIR) KERNELDIR=$(KDIR) KCC=$(CC) clean
 
 # spotless
