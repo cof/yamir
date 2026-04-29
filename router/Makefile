@@ -20,6 +20,7 @@ MAKEFLAGS += --no-print-directory
 
 include scripts/verbose.mk
 
+
 # compiler flags
 # --------------
 GCC_DEPS     := -MMD -MP
@@ -38,6 +39,12 @@ DEBUG_CFLAGS := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 CFLAGS  = -O2 $(YAMIR_CFLAGS)
 LDFLAGS = -static
 
+# NDK/SDK
+AND_ROOT  ?= $(HOME)/build/android
+SDK_PATH  := $(AND_ROOT)/android-sdk-linux
+DEV_ROOT  := $(AND_ROOT)/android-device
+ADB       := $(SDK_PATH)/platform-tools/adb
+
 TOPDIR=$(shell pwd)
 TARGET ?= linux
 
@@ -45,26 +52,27 @@ ifeq ($(TARGET), linux)
 	ARCH=$(shell uname -m)
 	KDIR=/lib/modules/$(shell uname -r)/build
 else ifeq ($(TARGET), samsungs2)
-	KDIR=/home/cy/wrk/android-device/samsungs2/kernel-src
+	KDIR=$(DEV_ROOT)/samsungs2/kernel-src
 	ARCH=arm
-	NDK_TOOLCHAIN=/home/cy/wrk/android9-toolchain/bin
-	KERN_TOOLCHAIN=/home/cy/wrk/CodeSourcery/Sourcery_G++_Lite/bin
+	NDK_TOOLCHAIN=$(AND_ROOT)/android9-toolchain/bin
+	KERN_TOOLCHAIN=$(AND_ROOT)/CodeSourcery/Sourcery_G++_Lite/bin
 	PATH := $(KERN_TOOLCHAIN):$(NDK_TOOLCHAIN):$(PATH)
-	#PATH := $(NDK_TOOLCHAIN):$(PATH)
 	export PATH
+	NDK_BUILD := $(NDK_TOOLCHAIN)/ndk-build
 	#iKCC=arm-linux-androideabi-gcc
 	#CC=arm-none-eabi-gcc
 	CC=arm-linux-androideabi-gcc
 	#OBJDIR=$(ARCH)
 	export CROSS_COMPILE=arm-none-eabi-
 else ifeq ($(TARGET), htcdesire)
-	KDIR=/home/cy/wrk/android-device/htcdesire/kernel-src
+	KDIR=$(DEV_ROOT)/htcdesire/kernel-src
 	ARCH=arm
 	#iKCC=arm-linux-androideabi-gcc
 	#CC=arm-none-eabi-gcc
-	NDK_TOOLCHAIN=/home/cy/wrk/android9-toolchain/bin
-	KERN_TOOLCHAIN=/home/cy/wrk/android-ndk-r5/toolchains/arm-eabi-4.4.0/prebuilt/linux-x86/bin
+	NDK_TOOLCHAIN=$(AND_ROOT)/android9-toolchain/bin
+	KERN_TOOLCHAIN=$(AND_ROOT)/android-ndk-r5/toolchains/arm-eabi-4.4.0/prebuilt/linux-x86/bin
 	PATH := $(KERN_TOOLCHAIN):$(NDK_TOOLCHAIN):$(PATH)
+	NDK_BUILD := $(NDK_TOOLCHAIN)/ndk-build
 	export PATH
 	CC=arm-linux-androideabi-gcc
 	#OBJDIR=$(ARCH)
