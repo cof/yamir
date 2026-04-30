@@ -90,7 +90,7 @@ static void pbb_ab_reset(struct pbb_ab *ab)
     ab->head = NULL;
 }
 
-/*  decoders */
+/* decoders */
 
 static inline uint32_t dec_u32(uint8_t *ptr, int size)
 {
@@ -315,9 +315,8 @@ static void dec_ab_expand(struct pbb_ab *ab, struct pbb_msg *msg)
         log_debug("addr=%s/%d ", pbb_addr_tostr(addr_len, buf), prefix);
 
         // add new msg-node
-        if (msg->num_node >= ARR_LEN(msg->nodes)) continue;
-        struct pbb_node *mn = &msg->nodes[msg->num_node++];
-        memset(mn, 0, sizeof(*mn));
+        struct pbb_node *mn = pbb_add_node(msg);
+        if (!mn) continue;
 
         memcpy(mn->addr, buf, addr_len);
         mn->prefix = prefix;
@@ -809,9 +808,7 @@ static bool compat_prefix(struct pbb_ab *ab, struct pbb_node *mn)
 
 static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 {
-    log_debug("naddr=%d addr=%s", ab->num_addr, pbb_addr_tostr(ab->addr_len, mn->addr));
-
-    if (pbb_node_skip(mn)) return false;
+    log_debug("naddr=%d addr=%s flags=0x%x", ab->num_addr, pbb_addr_tostr(ab->addr_len, mn->addr), mn->flags);
 
     if (ab->num_addr == 0)  {
         // first addr
@@ -903,15 +900,18 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
         .prefix = prefix
     };
 
-    int i = 0;
-    while (i < msg->num_node) {
-        if (enc_ab_compress(&ab, &msg->nodes[i])) {
-            i++; 
-            if (i < msg->num_node) continue;
-        }
+    for (int i = 0; i < msg->num_node; i++) {
+        if (pbb_node_skip(&msg->nodes[i])) continue;
+        if (enc_ab_compress(&ab, &msg->nodes[i])) continue;
         if (enc_ab_now(buf,  &ab)) return -1;
         if (enc_ab_tlvs(buf, &ab)) return -1;
         pbb_ab_reset(&ab);
+    }
+
+    // last ab
+    if (ab.num_addr) {
+        if (enc_ab_now(buf,  &ab)) return -1;
+        if (enc_ab_tlvs(buf, &ab)) return -1;
     }
 
     return 0;
@@ -1079,29 +1079,28 @@ int pkt_buf_msg_dec(struct pkt_buf *buf, struct pbb_msg *msg)
     return dec_pbb_msg(buf, msg);
 }
 
-#define ADDR_STRLEN sizeof("ffff:ffff:ffff:ffff:ffff:ffff:fffff:ffff")
-
-const char *pbb_addr_tostr(size_t len, uint8_t addr[static len])
+size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 {
-    static char bufs[4][ADDR_STRLEN]; 
-    static int idx;
+    size_t len = pkt_buf_avail(buf);
+    char *str = pkt_buf_ptr(buf);
 
-    char *buf = bufs[idx];
-    size_t size = sizeof(bufs[0]);
-    idx = (idx + 1) & 3;
+    va_list args;
+    va_start(args, fmt);
+    int nw = vsnprintf(str, len, fmt, args);
+    va_end(args);
 
-    if (len == 4 && inet_ntop(AF_INET, addr, buf, size)) return buf;
-    if (len == 16 && inet_ntop(AF_INET6, addr, buf, size)) return buf;
+    if (nw < 0) return 0;
 
-    return "";
+    if ((size_t) nw >= len) {
+        pkt_buf_endz(buf);
+        nw = len;
+    }
+    buf->ptr += nw;
+
+    return nw;
 }
 
-size_t pbb_str_toaddr(const char *str, uint8_t addr[static 16])
-{
-    if (inet_pton(AF_INET, str, addr) == 1) return 4;
-    if (inet_pton(AF_INET6, str, addr) == 1) return 16;
-    return 0;
-}
+#define pbb_printf pkt_buf_printf
 
 static char *u32toa(uint32_t val, char *buf, size_t len)
 {
@@ -1130,6 +1129,70 @@ static char *u32_tostr(uint32_t val)
 
     return u32toa(val, str, sizeof(bufs[0][0]));
 }
+
+const char *pbb_field_tostr(int field)
+{
+    char *str = field >= 0 && field < (int) ARR_LEN(field2str) 
+        ? field2str[field] : NULL;
+
+    return str ?: u32_tostr(field);
+}
+
+#define ADDR_STRLEN sizeof("ffff:ffff:ffff:ffff:ffff:ffff:fffff:ffff")
+
+const char *pbb_addr_tostr(size_t len, uint8_t addr[static len])
+{
+    static char bufs[4][ADDR_STRLEN]; 
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t size = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    if (len == 4 && inet_ntop(AF_INET, addr, buf, size)) return buf;
+    if (len == 16 && inet_ntop(AF_INET6, addr, buf, size)) return buf;
+
+    return "";
+}
+
+size_t pbb_str_toaddr(const char *str, uint8_t addr[static 16])
+{
+    if (inet_pton(AF_INET, str, addr) == 1) return 4;
+    if (inet_pton(AF_INET6, str, addr) == 1) return 16;
+    return 0;
+}
+
+size_t pbb_node_puts(struct pkt_buf *buf, struct pbb_node *mn, int addr_len)
+{
+    if (!mn) return pbb_printf(buf, "<none>");
+
+    pbb_printf(buf, "%s", pbb_addr_tostr(addr_len, mn->addr));
+    pbb_printf(buf, " flags=0x%x", mn->flags);
+
+    if (pbb_node_dist(mn)) pbb_printf(buf, " dist=%u", mn->dist);
+    if (pbb_node_vtim(mn)) pbb_printf(buf, " vtim=%u", mn->vldtime);
+    if (pbb_node_seqn(mn)) pbb_printf(buf, " seqn=%u", mn->seqnum);
+    if (pbb_node_pref(mn)) pbb_printf(buf, " pref=%u", mn->prefix);
+
+    return pkt_buf_used(buf);
+}
+
+const char *pbb_node_tostr(struct pbb_node *mn, int addr_len)
+{
+    static char bufs[4][128]; 
+    static int idx;
+
+    char *str = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    struct pkt_buf buf = PKT_BUF_INIT(str, len);
+
+    pbb_node_puts(&buf, mn, addr_len);
+
+    return str;
+}
+
 
 // Mobile Ad hoc NETwork (MANET) Parameters
 const char *pbb_type_tostr(uint8_t type)
@@ -1161,28 +1224,6 @@ uint8_t pbb_str_totype(const char *str)
     return atoi(str);
 }
 
-size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
-{
-    size_t len = pkt_buf_avail(buf);
-    char *str = pkt_buf_ptr(buf);
-
-    va_list args;
-    va_start(args, fmt);
-    int nw = vsnprintf(str, len, fmt, args);
-    va_end(args);
-
-    if (nw < 0) return 0;
-
-    if ((size_t) nw >= len) {
-        pkt_buf_endz(buf);
-        nw = len;
-    }
-    buf->ptr += nw;
-
-    return nw;
-}
-
-#define pbb_printf pkt_buf_printf
 
 int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len)
 {
@@ -1207,12 +1248,8 @@ int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len)
     // addr-block (msg-node)
     for (int i = 0; i < msg->num_node; i++) {
         struct pbb_node *mn = &msg->nodes[i];
-        pbb_printf(&buf, "[ ADDR: %s", pbb_addr_tostr(msg->addr_len, mn->addr));
-        pbb_printf(&buf, " flags=0x%x", mn->flags);
-        if (pbb_node_dist(mn)) pbb_printf(&buf, " dist=%u", mn->dist);
-        if (pbb_node_vtim(mn)) pbb_printf(&buf, " vtim=%u", mn->dist);
-        if (pbb_node_seqn(mn)) pbb_printf(&buf, " vtim=%u", mn->seqnum);
-        if (pbb_node_pref(mn)) pbb_printf(&buf, " pref=%u", mn->prefix);
+        pbb_printf(&buf, " [ ");
+        pbb_node_puts(&buf, mn, msg->addr_len);
         pbb_printf(&buf, " ]\n");
     }
 

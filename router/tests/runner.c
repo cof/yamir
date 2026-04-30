@@ -138,6 +138,9 @@ enum enc_field {
     ENC_HLIMIT,
     ENC_HCOUNT,
     ENC_DID,
+    ENC_DIST,
+    ENC_VLDTIME,
+    ENC_PREFIX,
     ENC_OADDR,
     ENC_TADDR,
     ENC_ADDR
@@ -154,6 +157,9 @@ static enum enc_field str_tofield(const char *str)
     if (!strcasecmp(str, "hlimit"))   return ENC_HLIMIT;
     if (!strcasecmp(str, "hcount"))   return ENC_HCOUNT;
     if (!strcasecmp(str, "did"))      return ENC_DID;
+    if (!strcasecmp(str, "dist"))     return ENC_DIST;
+    if (!strcasecmp(str, "vldtime"))  return ENC_VLDTIME;
+    if (!strcasecmp(str, "prefix"))   return ENC_PREFIX;
     if (!strcasecmp(str, "oaddr"))    return ENC_OADDR;
     if (!strcasecmp(str, "taddr"))    return ENC_TADDR;
     if (!strcasecmp(str, "addr"))     return ENC_ADDR;
@@ -206,6 +212,54 @@ static int enc_pkt(struct pkt_buf *dst, const char *str)
     return pkt_buf_hdr_enc(dst, &hdr);
 }
 
+static int enc_node(struct pbb_msg *msg, struct pbb_node *mn, char *fn, char *fv)
+{
+    char *attrs = strchr(fv, ',');
+    if (attrs) *attrs++ = '\0';
+
+    uint8_t addr_len = pbb_str_toaddr(fv, mn->addr);
+    if (!addr_len) return log_error_rf("%s invalid addr %s", fn, fv);
+
+    if (!msg->addr_len) msg->addr_len = addr_len;
+    if (addr_len != msg->addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg->addr_len);
+
+    // dist,vldtim,seqnum,prefix [name=value,]
+    while (attrs) {
+
+        char *an = attrs;
+        attrs = strchr(attrs, ',');
+        if (attrs) *attrs++ = '\0';
+        char *av = strchr(an, '=');
+        if (av) *av++ = '\0';
+
+        switch(str_tofield(an)) {
+        case ENC_FLAGS:
+            mn->flags |= strtoul(av, NULL, 0);
+            break;
+        case ENC_DIST:
+            mn->flags |= PBB_NF_DIST;
+            mn->dist= strtoul(av, NULL, 10);
+            break;
+        case ENC_VLDTIME:
+            mn->flags |= PBB_NF_VTIM;
+            mn->vldtime = strtoul(av, NULL, 10);
+            break;
+        case ENC_SEQNUM:
+            mn->flags |= PBB_NF_SEQN;
+            mn->seqnum = atoi(av);
+            break;
+        case ENC_PREFIX:
+            mn->flags |= PBB_NF_PREF;
+            mn->prefix = atoi(av);
+            break;
+        default:
+            return log_errno_rf("%s unknown", an);
+        }
+    }
+
+    return 0;
+}
+
 static int enc_msg(struct pkt_buf *dst, const char *str)
 {
     if (!str) return 0;
@@ -216,7 +270,6 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
     pbb_msg_reset(&msg);
 
     struct pbb_node *mn;
-    uint8_t addr_len;
 
     while (str < end)  {
         // slice splitch
@@ -268,10 +321,7 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
                 mn = msg.origin;
                 if (!mn) return log_error_rf("No space for %s", fn);
             }
-            addr_len = pbb_str_toaddr(fv, mn->addr);
-            if (!addr_len) return log_error_rf("%s invalid addr %s", fn, fv);
-            if (!msg.addr_len) msg.addr_len = addr_len;
-            if (addr_len != msg.addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg.addr_len);
+            if (enc_node(&msg, mn, fn, fv)) return -1;
             break;
         case ENC_TADDR:
             mn = msg.target;
@@ -281,18 +331,12 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
                 mn = msg.target;
                 if (!mn) return log_error_rf("No space for %s", fn);
             }
-            addr_len = pbb_str_toaddr(fv, mn->addr);
-            if (!addr_len) return log_error_rf("%s invalid addr %s", fn, fv);
-            if (!msg.addr_len) msg.addr_len = addr_len;
-            if (addr_len != msg.addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg.addr_len);
+            if (enc_node(&msg, mn, fn, fv)) return -1;
             break;
         case ENC_ADDR:
             mn = pbb_add_node(&msg);
             if (!mn) return log_error_rf("No space for %s", fn);
-            addr_len = pbb_str_toaddr(fv, mn->addr);
-            if (!addr_len) return log_error_rf("%s invalid addr %s", fn, fv);
-            if (!msg.addr_len) msg.addr_len = addr_len;
-            if (addr_len != msg.addr_len) return log_error_rf("%s %s must be %d", fn, fv, msg.addr_len);
+            if (enc_node(&msg, mn, fn, fv)) return -1;
             break;
         default:
             return log_errno_rf("%s unknown", fn);

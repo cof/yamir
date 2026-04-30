@@ -143,6 +143,14 @@ void log_argv(const char *what, int argc, char *argv[]);
         _log_msg(__FILE__, __LINE__, __func__, 0, LOG_DEBUG, NULL, __VA_ARGS__); \
     }
 
+#define log_debug_rc(rc, ...) ({\
+    if (log_level >= LOG_DEBUG) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_DEBUG, NULL, __VA_ARGS__); \
+    } \
+    (rc); \
+})
+
+
 #define log_error(...) \
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \

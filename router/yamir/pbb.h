@@ -227,6 +227,7 @@ static inline struct pbb_node *pbb_node_reset(struct pbb_node *mn)
 #define PBB_NF_VTIM  (1 << 3)
 #define PBB_NF_SEQN  (1 << 4)
 
+
 // helpers
 static inline bool pbb_node_skip(const struct pbb_node *mn)
 {
@@ -385,8 +386,11 @@ int pkt_buf_hdr_dec(struct pkt_buf *buf, struct pbb_hdr *hdr);
 int pkt_buf_msg_enc(struct pkt_buf *buf, struct pbb_msg *msg);
 int pkt_buf_msg_dec(struct pkt_buf *buf, struct pbb_msg *msg);
 
+const char *pbb_field_tostr(int field);
 size_t pbb_str_toaddr(const char *str, uint8_t addr[static 16]);
+size_t pbb_node_puts(struct pkt_buf *buf, struct pbb_node *mn, int addr_len);
 const char *pbb_addr_tostr(size_t len, uint8_t addr[static len]);
+const char *pbb_node_tostr(struct pbb_node *mn, int addr_len);
 const char *pbb_type_tostr(uint8_t type);
 uint8_t pbb_str_totype(const char *str);
 int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len);

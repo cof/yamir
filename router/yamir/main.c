@@ -34,6 +34,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <stdalign.h>
 #include <poll.h>
 
 #include <sys/types.h>
@@ -61,7 +62,7 @@
 
 #define YAMIR_MAXBUF 1024
 #define YAMIR_MSGSIZE NLMSG_SPACE(sizeof(struct yamir_msg))
-#define YAMIR_MAXCTRL CMSG_SPACE(sizeof(struct in_pktinfo))
+#define YAMIR_MAXCTRL  128
 #define YAMIR_MAXPKT 10
 #define YAMIR_MAXTIMER 128
 
@@ -74,7 +75,7 @@
 
 // default settings from draft-ietf-manet-dymo-21.txt
 #define DISCOVERY_ATTEMPTS_MAX 3
-
+#define MSG_HOPLIMIT 10
 
 // signal
 volatile sig_atomic_t keep_running = 0;
@@ -119,7 +120,10 @@ struct yamir_state {
     struct sockaddr_storage addr_pool[YAMIR_MAXPKT];
     struct mmsghdr msgs[YAMIR_MAXPKT];
     struct iovec   iovs[YAMIR_MAXPKT];
-    uint8_t ctrl_pool[YAMIR_MAXPKT * YAMIR_MAXCTRL];
+    union {
+        char buf[YAMIR_MAXCTRL];
+        struct cmsghdr align;
+    } ctrl_pool[YAMIR_MAXPKT];
     uint8_t recv_pool[];
 };
 
@@ -203,9 +207,9 @@ static inline bool dr_dist(const struct dymo_rt *dr)
     return dr->flags & DRF_HAS_DIST;
 }
 
-static inline bool yamir_islocaladdr(struct yamir_state *s, uint32_t addr)
+static inline bool yamir_islocaladdr(struct yamir_state *ys, struct pbb_node *mn)
 {
-    return s->local_addr == addr;
+    return ys->local_addr == mn->ip4_addr;
 }
 
 static const char *yamir_type_tostr(uint32_t type)
@@ -230,21 +234,6 @@ static const char *rtnl_type_tostr(uint32_t type)
     return  "???";
 }
 
-#define RESPONSIBLE_ADDRESSES 0
-#define MSG_HOPLIMIT 10
-
-struct recv_state {
-    uint32_t saddr;
-    uint32_t maddr;
-    uint32_t daddr;
-    uint32_t ifindex;
-};
-
-static struct dymo_req *find_req(struct yamir_state *s, uint32_t addr);
-static void dymo_req_done(struct dymo_req *req, int reason);
-static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg);
-static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr);
-
 #define ADDR_STRLEN INET_ADDRSTRLEN + sizeof(":65535")
 
 static const char *sockaddr_tostr(struct sockaddr_in *sa)
@@ -268,11 +257,96 @@ static const char *sockaddr_tostr(struct sockaddr_in *sa)
     return buf;
 }
 
+static inline const char *addr_tostr(uint32_t addr) 
+{
+    return pbb_addr_tostr(4, (void *) &addr);
+}
+
+static const char *route_tostr(struct dymo_rt *dr)
+{
+    static char bufs[4][128];
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t size = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    if (!dr) return "<none>";
+
+    snprintf(buf, size, 
+        "addr=%s/%d gwaddr=%s gwif=%d seqnum=%d dist=%d flags=0x%x",
+        addr_tostr(dr->addr), dr->prefix, 
+        addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex, 
+        dr->seqnum, dr->dist, 
+        dr->flags);
+
+    return buf;
+}
+
+static const char *dymo_msg_tostr(struct pbb_msg *msg) 
+{
+    static char bufs[4][256];
+    static int idx;
+
+    char *str = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    if (!msg) return "<none>";
+
+    struct pkt_buf buf = PKT_BUF_INIT(str, len);
+
+    pkt_buf_printf(&buf,
+        "type=%s flags=0x%x hlim=%d did=%u nodes=%d tlvs=%d taddr=[%s] oaddr=[%s]",
+        pbb_type_tostr(msg->type), msg->flags, msg->hop_limit, msg->did,
+        msg->num_node, msg->num_tlv, 
+        pbb_node_tostr(msg->target, msg->addr_len), 
+        pbb_node_tostr(msg->origin, msg->addr_len));
+
+    return str;
+}
+
+struct recv_state {
+    uint32_t saddr;
+    uint32_t maddr;
+    uint32_t daddr;
+    uint32_t ifindex;
+};
+
+static const char *recv_state_tostr(struct recv_state *rs)
+{
+    static char bufs[4][128];
+    static int idx;
+
+    char *str = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    if (!rs) return "<none>";
+
+    struct pkt_buf buf = PKT_BUF_INIT(str, len);
+
+    pkt_buf_printf(&buf,
+        "saddr=%s daddr=%s ifidx=%d",
+        addr_tostr(rs->saddr),
+        addr_tostr(rs->daddr),
+        rs->ifindex);
+
+    return str;
+}
+
+static struct dymo_req *find_req(struct yamir_state *s, uint32_t addr);
+static void dymo_req_done(struct dymo_req *req, int reason);
+static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg);
+static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr);
+
 // stevens page 533 // see ip 7 IP_PKTINFO
 static int recvfrom_wstate(int fd, size_t vlen,
     struct mmsghdr msgs[static vlen],
     struct recv_state *states)
 {
+    log_debug("fd=%d", fd);
+
     int nr = recvmmsg(fd, msgs, vlen, MSG_DONTWAIT, NULL);
     if (nr == -1 || !states) return nr;
 
@@ -287,6 +361,8 @@ static int recvfrom_wstate(int fd, size_t vlen,
         rs->ifindex = 0;
         rs->maddr = 0;
         rs->daddr = 0;
+
+        log_debug("msg=%d flags=0x%0x clen=%zu", i, m->msg_flags, m->msg_controllen);
 
         if (m->msg_flags & MSG_CTRUNC) continue;
         if (m->msg_controllen < sizeof(struct cmsghdr)) continue;
@@ -324,11 +400,6 @@ static int netlink_send(int fd, void *data, size_t len)
     return 0;
 }
 
-static inline const char *addr_tostr(uint32_t addr) 
-{
-    return pbb_addr_tostr(4, (void *) &addr);
-}
-
 static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 {
     (void) ucontext;
@@ -343,6 +414,8 @@ static struct dymo_rt *route_find(struct yamir_state *ys, uint32_t addr)
     struct dymo_rt *match = NULL;
     struct dymo_rt *dr;
 
+    log_debug("addr=%s", addr_tostr(addr));
+
     addr = ntohl(addr);
 
     list_fornext_entry(&ys->routes, dr, node) {
@@ -354,6 +427,8 @@ static struct dymo_rt *route_find(struct yamir_state *ys, uint32_t addr)
             }
         }
     }
+
+    log_debug("match=%s", route_tostr(match));
 
     return match;
 }
@@ -473,31 +548,14 @@ static void used_timeout_cb(void *arg)
 
 static void route_stop_timers(struct dymo_rt *dr)
 {
+    log_debug("Stopping");
+
     stop_delete_timer(dr);
     stop_seqnum_timer(dr);
     stop_used_timer(dr);
     stop_age_timer(dr);
 }
 
-static void print_route(const char *prefix, struct dymo_rt *dr)
-{
-    if (prefix) {
-        log_debug("%s :",prefix);
-    }
-
-    log_debug("route addr=%s prefix=%d seqnum=%d "
-        "nexthop=%s ifr=%d flags=%u dist=%d "
-        "timestamp=%ld.%ld",
-        addr_tostr(dr->addr),
-        dr->prefix,
-        dr->seqnum,
-        addr_tostr(dr->nexthop_addr),
-        dr->nexthop_ifindex,
-        dr->flags,
-        dr->dist,
-        dr->timestamp.tv_sec,
-        dr->timestamp.tv_usec);
-}
 
 // note only remove yamir if expliclty requested (don't drop packets)
 static void rtnl_send_route_del(struct dymo_rt *dr, int yamir)
@@ -563,6 +621,10 @@ static int route_update(struct yamir_state *ys,
     int msg_type, struct pbb_node *mn,
     uint32_t nexthop_addr, uint32_t nexthop_ifindex)
 {
+    log_debug("type=%d mnaddr=%s gwaddr=%s gwif=%d", 
+        msg_type, addr_tostr(mn->ip4_addr), 
+        addr_tostr(nexthop_addr), nexthop_ifindex);
+
     struct dymo_rt *dr = route_find(ys, mn->ip4_addr);
 
     if (dr && !node_superior(mn, dr, msg_type)) return 0;
@@ -622,8 +684,7 @@ static int dymo_msg_send(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 {
     static unsigned char wbuf[WBUF_SIZE];
 
-    log_debug("type=%s flags=0x%x nodes=%d tlvs=%d dst=%s", 
-        pbb_type_tostr(msg->type), msg->flags, msg->num_node, msg->num_tlv, addr_tostr(addr));
+    log_debug("dst=%s msg=(%s)", addr_tostr(addr), dymo_msg_tostr(msg));
 
     struct pkt_buf buf = PKT_BUF_INIT(wbuf, sizeof(wbuf));
     struct pbb_hdr hdr = { 0 };
@@ -652,6 +713,8 @@ static int dymo_msg_send(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 // 5.3.2 (send reply back to request originator)
 static int dymo_reply_send(struct yamir_state *ys, struct pbb_msg *req)
 {
+    log_debug("req=(%s)", dymo_msg_tostr(req));
+
     struct pbb_msg reply;
 
     pbb_msg_reset(&reply);
@@ -734,6 +797,8 @@ static bool dec_hop_limit(struct pbb_msg *msg)
 // TODO add unicast support
 static int dymo_rerr_send(struct yamir_state *ys, uint32_t addr, uint16_t seqnum, uint8_t prefix)
 {
+    log_debug("addr=%s/%d seqnum=%d", addr_tostr(addr), prefix, seqnum);
+
     struct pbb_msg rerr;
 
     pbb_msg_reset(&rerr);
@@ -757,28 +822,30 @@ static int dymo_rerr_send(struct yamir_state *ys, uint32_t addr, uint16_t seqnum
 }
 
 // 5.3.4 page 24 relay route-message
-static int relay_rm(struct yamir_state *ys, struct pbb_msg *msg, struct recv_state *rs)
+static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_state *rs)
 {
+    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rmsg));
+
     // append addtional routing info
 
     // distance checks
-    if (!inc_node_dist(msg->origin)) return 0;
+    if (!inc_node_dist(rmsg->origin)) return 0;
 
-    for (int i = 0; i < msg->num_node; i++) {
-        struct pbb_node *mn = &msg->nodes[i];
+    for (int i = 0; i < rmsg->num_node; i++) {
+        struct pbb_node *mn = &rmsg->nodes[i];
         if (!inc_node_dist(mn)) {
             mn->flags |= PBB_NF_SKIP;
         }
     }
 
     // check if must discard
-    if (!dec_hop_limit(msg)) return 0;
+    if (!dec_hop_limit(rmsg)) return 0;
 
     // replies or unicast requests always sent via next hop addr
     uint32_t dst_addr;
-    if (msg->type == DYMO_RREP || is_unicast(rs->daddr)) {
+    if (rmsg->type == DYMO_RREP || is_unicast(rs->daddr)) {
         // need check if rm can be routed towards target
-        struct pbb_node *target = msg->target;
+        struct pbb_node *target = rmsg->target;
         struct dymo_rt *dr = route_find(ys, target->ip4_addr);
         if (!dr) return dymo_rerr_send(ys, target->ip4_addr, target->seqnum, target->prefix);
         if (dr_isbroken(dr)) return dymo_rerr_send(ys, target->ip4_addr, dr->seqnum, target->prefix);
@@ -788,36 +855,45 @@ static int relay_rm(struct yamir_state *ys, struct pbb_msg *msg, struct recv_sta
         dst_addr = ys->mcast_addr;
     }
 
-    return dymo_msg_send(ys, msg, dst_addr);
+    return dymo_msg_send(ys, rmsg, dst_addr);
 }
 
 // check valid route-message
-static int validate_msg(struct yamir_state *s, struct pbb_msg *msg)
+static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
 {
     // check required fields present
     if (!pbb_msg_hlim(msg)) return PBB_MSG_HLIM;
     if (!msg->target) return PBB_MSG_TNODE;
     if (!msg->origin) return PBB_MSG_ONODE;
     if (!pbb_node_seqn(msg->origin)) return PBB_MSG_OSEQN;
-    if (msg->did != s->node_did) return PBB_MSG_TLV_DID;
-    if (yamir_islocaladdr(s, msg->orig_ip4)) return PBB_MSG_OLADDR;
+    if (msg->did != ys->node_did) return PBB_MSG_TLV_DID;
+    if (yamir_islocaladdr(ys, msg->origin)) return PBB_MSG_OLADDR;
 
     return 0; 
 }
 
-static int handle_rreq(struct yamir_state *ys, struct pbb_msg *req, struct recv_state *rs)
+// fixup target+origin ptrs
+static void fixup_nodes(struct pbb_msg *msg)
 {
-    log_debug("%s flags=0x%x nodes=%d tlvs=%d",
-        pbb_type_tostr(req->type), req->flags, req->num_node, req->num_tlv);
+    if (msg->num_node > 0) msg->target = &msg->nodes[0];
+    if (msg->num_node > 1) msg->origin = &msg->nodes[1];
+}
 
-    if (validate_msg(ys, req)) return 0;
+static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv_state *rs)
+{
+    fixup_nodes(rreq);
+    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rreq));
+
+    // check required fields present
+    int rc = validate_msg(ys, rreq);
+    if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
     
-    int orig_superior = route_update(ys, req->type, req->origin, rs->saddr, rs->ifindex);
+    int orig_superior = route_update(ys, rreq->type, rreq->origin, rs->saddr, rs->ifindex);
 
     // additional nodes 
-    for (int i = 0; i < req->num_node; i++) {
-        struct pbb_node *mn = &req->nodes[i];
-        if (!route_update(ys, req->type, mn, rs->saddr, rs->ifindex)) {
+    for (int i = 0; i < rreq->num_node; i++) {
+        struct pbb_node *mn = &rreq->nodes[i];
+        if (!route_update(ys, rreq->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
         }
     }
@@ -825,27 +901,29 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *req, struct recv_
     if (!orig_superior) return 0;
 
     // relay request-msg if not for us
-    if (!yamir_islocaladdr(ys, req->target->ip4_addr)) {
-        return relay_rm(ys, req, rs);
+    if (!yamir_islocaladdr(ys, rreq->target)) {
+        return relay_rmsg(ys, rreq, rs);
     }
 
     // request is for us
-    return dymo_reply_send(ys, req);
+    return dymo_reply_send(ys, rreq);
 }
 
-static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rep, struct recv_state *rs)
+static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv_state *rs)
 {
-    log_debug("%s flags=0x%x nodes=%d tlvs=%d",
-        pbb_type_tostr(rep->type), rep->flags, rep->num_node, rep->num_tlv);
+    fixup_nodes(rrep);
+    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rrep));
 
-    if (validate_msg(ys, rep)) return 0;
-    
-    int orig_superior = route_update(ys, rep->type, rep->origin, rs->saddr, rs->ifindex);
+    // check required fields present
+    int rc = validate_msg(ys, rrep);
+    if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
+
+    int orig_superior = route_update(ys, rrep->type, rrep->origin, rs->saddr, rs->ifindex);
 
     // additional nodes 
-    for (int i = 0; i < rep->num_node; i++) {
-        struct pbb_node *mn = &rep->nodes[i];
-        if (!route_update(ys, rep->type, mn, rs->saddr, rs->ifindex)) {
+    for (int i = 0; i < rrep->num_node; i++) {
+        struct pbb_node *mn = &rrep->nodes[i];
+        if (!route_update(ys, rrep->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
         }
     }
@@ -853,12 +931,12 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rep, struct recv_
     if (!orig_superior) return 0;
 
     // relay reply-msg if not for us
-    if (!yamir_islocaladdr(ys, rep->target->ip4_addr)) {
-        return relay_rm(ys, rep, rs);
+    if (!yamir_islocaladdr(ys, rrep->target)) {
+        return relay_rmsg(ys, rrep, rs);
     }
 
     // reply is for us
-    return dymo_reply_recv(ys, rep);
+    return dymo_reply_recv(ys, rrep);
 }
 
 // RERR handling page 28
@@ -893,36 +971,36 @@ static int validate_rerr(struct yamir_state *s, struct pbb_msg *rerr)
     return 0;
 }
 
-static void handle_rerr(struct yamir_state *s, struct pbb_msg *rerr, struct recv_state *state)
+static int handle_rerr(struct yamir_state *ys, struct pbb_msg *rerr, struct recv_state *rs)
 {
-    log_debug("%s flags=0x%x nodes=%d tlvs=%d",
-        pbb_type_tostr(rerr->type), rerr->flags, rerr->num_node, rerr->num_tlv);
+    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rerr));
 
-    // first check required fields present
-    if (validate_rerr(s, rerr)) return;
+    // check required fields present
+    int rc = validate_rerr(ys, rerr);
+    if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
 
     // need to scan our routes
     int num_skip = 0;
     for (int i = 0; i < rerr->num_node; i++) {
         struct pbb_node *mn = &rerr->nodes[i];
-        if (!route_broken(s, mn, state->saddr)) {
+        if (!route_broken(ys, mn, rs->saddr)) {
             mn->flags |= PBB_NF_SKIP;
             num_skip++;
         }
     }
 
     // discard if no unreachable nodes left
-    if (num_skip == rerr->num_node) return;
+    if (num_skip == rerr->num_node) return 0;
 
     // discard if hop limit reached
-    if (!dec_hop_limit(rerr)) return;
+    if (!dec_hop_limit(rerr)) return 0;
 
     // relay rerr
     // not sure what standard means by here by NextHopAddress
     // for unicast RERR is this the nexthopaddress for the unreachable node
     // or the actual ip destiation address (what happens if there are more
     // than 1 unreachable node in the RERR packet ?
-    dymo_msg_send(s, rerr, s->mcast_addr);
+    return dymo_msg_send(ys, rerr, ys->mcast_addr);
 }
 
 static struct dymo_req *req_create(struct yamir_state *s)
@@ -1001,8 +1079,7 @@ static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
     if (!origin) return log_error_rv("Add origin failed");
     msg.origin = origin;
     origin->ip4_addr = ys->local_addr;
-    //origin->flags |= PBB_NF_SEQN;
-    origin->seqnum = ys->own_seqnum;
+    origin->flags |= PBB_NF_SEQN;
 
     // multicast request
     log_debug("Sending RREQ target=%s origin=%s seqnum=%d",  
@@ -1124,7 +1201,7 @@ static void route_err(struct yamir_state *ys, uint32_t addr, int ifindex)
 
     // did kernel module lose some route details
     if (!dr_isbroken(dr)) {
-        print_route("Not broken!", dr);
+        log_error("Not broken %s", route_tostr(dr));
         if (dr_isinstalled(dr)) {
             struct yamir_msg msg = { dr->addr, dr->nexthop_ifindex };
             kyamir_send_msg(ys, YAMIR_RT_ADD, &msg);
@@ -1180,6 +1257,9 @@ static int dymo_recv(struct yamir_state *ys)
 {
     struct recv_state states[YAMIR_MAXPKT];
 
+    for (size_t i = 0; i < YAMIR_MAXPKT; i++) {
+        ys->msgs[i].msg_hdr.msg_controllen = sizeof(ys->ctrl_pool[i].buf);
+    }
     int nr = recvfrom_wstate(ys->dymo_fd, YAMIR_MAXPKT, ys->msgs, states);
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
@@ -1734,8 +1814,8 @@ static struct yamir_state *yamir_create(void)
         ys->msgs[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
         ys->msgs[i].msg_hdr.msg_iov = &ys->iovs[i];
         ys->msgs[i].msg_hdr.msg_iovlen = 1;
-        ys->msgs[i].msg_hdr.msg_control = &ys->ctrl_pool[i * YAMIR_MAXCTRL];
-        ys->msgs[i].msg_hdr.msg_controllen = YAMIR_MAXCTRL;
+        ys->msgs[i].msg_hdr.msg_control = ys->ctrl_pool[i].buf;
+        ys->msgs[i].msg_hdr.msg_controllen = sizeof(ys->ctrl_pool[i].buf);
     }
 
     return ys;
