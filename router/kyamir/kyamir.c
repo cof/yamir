@@ -9,6 +9,7 @@
  * NF_INET_POST_ROUTING : packet sent after routing decision
  */
 #include <linux/version.h>
+#define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -20,8 +21,9 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/inetdevice.h> 
 
-#include <net/net_namespace.h>
 #include <net/netns/generic.h>
+#include <net/net_namespace.h>
+#include <net/genetlink.h>
 
 #include <net/icmp.h>
 
@@ -29,7 +31,7 @@
 #include "netlink.h"
 #include "compat.h"
 
-static int yamir_net_id; // namespace id
+static int yamir_netid; // namespace id
 
 // linux kernel ./net/ipv4/netfilter/ip_queue.c 
 // TODO make these module parameters + provide proc view
@@ -51,11 +53,13 @@ struct queue_packet {
     int  (*okfn)(struct sk_buff *);
 };
 
-
-#define HAVE_IFNAME 0x1
-#define HAVE_IPADDR 0x2
+// flags
+#define KSF_IFNAME 0x1
+#define KSF_IPADDR 0x2
+#define KSF_NFHOOK 0x4
 
 struct kyamir_state {
+    uint32_t flags;
     // packet queue
     rwlock_t queue_lock;
     struct list_head queue_list;
@@ -66,10 +70,8 @@ struct kyamir_state {
     unsigned int route_total;
     // netlink 
     int peer_pid;
-    struct sock *netlink_sock;
     struct mutex kyamirnl_mutex;
     // interface
-    uint32_t flags;
     char ifname[IFNAMSIZ];
     int ifindex;
     int vaddr;
@@ -80,7 +82,7 @@ struct kyamir_state {
 
 static char *ifname = "wlan0"; 
 module_param(ifname, charp, 0444);
-MODULE_PARM_DESC(ifname, "Interface name to intercept (e.g., eth0)");
+MODULE_PARM_DESC(ifname, "Interface name to intercept (e.g. wlan0)");
 
 static void route_flush(struct kyamir_state *ks)
 {
@@ -103,6 +105,8 @@ static int route_exists(struct kyamir_state *ks, uint32_t addr)
 {
     struct route_entry *entry, *found;
     struct list_head *ptr;
+
+    pr_debug("kyamir: route_exists netid=%d addr=%pI4\n", yamir_netid, &addr);
 
     read_lock_bh(&ks->route_lock);
 
@@ -274,7 +278,7 @@ static void queue_drop(struct kyamir_state *ks, uint32_t addr)
     struct queue_packet *pkt;
     int num_drop = 0;
 
-    pr_debug("kyamir:drop addr=%pI4\n", &addr);
+    pr_debug("kyamir: queue_drop netid=%d addr=%pI4\n", yamir_netid, &addr);
 
     while ( (pkt = dequeue_packet(ks, addr)) != NULL) {
         // tell application that dest unreachable
@@ -303,6 +307,8 @@ static void queue_send(struct kyamir_state *ks, uint32_t addr)
 {
     struct queue_packet *pkt;
 
+    pr_debug("kyamir: queue_send netid=%d addr=%pI4\n", yamir_netid, &addr);
+
     while ( (pkt = dequeue_packet(ks, addr)) != NULL) {
         if (route_exists(ks, addr)) {
             kyamir_ip_route_me_harder(pkt->net, pkt->skb, RTN_LOCAL);
@@ -322,6 +328,8 @@ static int queue_exists(struct kyamir_state *ks, uint32_t addr)
 {
     struct queue_packet *pkt, *found;
     struct list_head *ptr;
+
+    pr_debug("kyamir: queue_exists netid=%d addr=%pI4\n", yamir_netid, &addr);
 
     read_lock_bh(&ks->queue_lock);
 
@@ -347,26 +355,27 @@ static void queue_deinit(struct kyamir_state *ks)
 }
 
 // receive msg from userpace
-static int yamir_recv_msg(struct kyamir_state *ks, int type, void *data, int len)
+static int yamir_recv_msg(struct kyamir_state *ks, 
+    struct net *net, int type, struct yamir_msg *msg)
 {
-    struct yamir_msg *msg = (struct yamir_msg *) data;
-    if (len < sizeof(*msg)) return -EINVAL;
     int rc = 0;
 
-    pr_debug("kyamir:recv type=%d addr=%pI4 ifindex=%d\n", type, &msg->addr, msg->ifindex);
+    pr_debug("kyamir: recv_msg type=%d addr=%pI4 ifindex=%d\n", type, &msg->ip4_addr, msg->ifindex);
 
     switch(type) {
+    case YAMIR_RT_REG:
+        break;
     case YAMIR_RT_NONE:
         // no route for addr
-        queue_drop(ks, msg->addr);
+        queue_drop(ks, msg->ip4_addr);
         break;
     case YAMIR_RT_ADD:
-        route_add(ks, msg->addr);
-        queue_send(ks, msg->addr);
+        route_add(ks, msg->ip4_addr);
+        queue_send(ks, msg->ip4_addr);
         break;
     case YAMIR_RT_DEL:  
-        route_del(ks, msg->addr);
-        queue_drop(ks, msg->addr);
+        route_del(ks, msg->ip4_addr);
+        queue_drop(ks, msg->ip4_addr);
         break;
     default:
         rc = -EINVAL;
@@ -375,111 +384,102 @@ static int yamir_recv_msg(struct kyamir_state *ks, int type, void *data, int len
     return rc;
 }
 
-// note this code assumes only one netlink message in buffer
-// linux_kernel/net/ipv4/netfilter/ip_queue.c
-#define RCV_SKB_FAIL(err) do { \
-    kyamir_netlink_ack(skb, nlh, (err));\
-    return; \
-} while (0)
-
-static void netlink_recv_skb(struct kyamir_state *ks, struct sk_buff *skb)
+static bool load_msg(struct yamir_msg *msg, struct genl_info *info)
 {
-    struct nlmsghdr *nlh;
-    int pid, type, flags, rc;
+    int fields = 0;
 
-    // chech nlh
-    if (skb->len < nlmsg_total_size(0)) return;
-    nlh = nlmsg_hdr(skb);
-    if (nlh->nlmsg_len < NLMSG_HDRLEN || skb->len < nlh->nlmsg_len) return;
-
-    pid   = NETLINK_SENDER_ID(nlh);
-    flags = nlh->nlmsg_flags;
-    type  =  nlh->nlmsg_type;
-
-    if (pid <= 0 || !(flags & NLM_F_REQUEST) || flags & NLM_F_MULTI)
-        RCV_SKB_FAIL(-EINVAL);
-
-    // permission check
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0))
-    if (security_netlink_recv(skb, CAP_NET_ADMIN))
-#else
-    if (!capable(CAP_NET_ADMIN))
-#endif
-        RCV_SKB_FAIL(-EPERM);
-
-    // peer binding check
-    if (ks->peer_pid && ks->peer_pid != pid) {
-        RCV_SKB_FAIL(-EBUSY);
+    if (info->attrs[YAMIR_ATTR_IP4ADDR]) {
+        msg->ip4_addr = nla_get_u32(info->attrs[YAMIR_ATTR_IP4ADDR]);
+        fields++;
     }
-    ks->peer_pid = pid;
 
-    rc = yamir_recv_msg(ks, type, nlmsg_data(nlh), nlmsg_len(nlh));
-    if (rc < 0) RCV_SKB_FAIL(rc);
-
-    // final ack
-    if (flags & NLM_F_ACK) {
-        kyamir_netlink_ack(skb, nlh, 0);
+    if (info->attrs[YAMIR_ATTR_IFINDEX]) {
+        msg->ifindex = nla_get_u32(info->attrs[YAMIR_ATTR_IFINDEX]);
+        fields++;
     }
+
+    return fields == 2;
 }
 
-static void kyamir_recv_skb(struct sk_buff *skb)
+static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
 {
-    struct net *net;
-    struct kyamir_state *ks;
+    if (!skb || !skb->sk) return 0;
 
-    if (!skb || !skb->sk) return;
+    struct net *net = sock_net(skb->sk);
+    struct kyamir_state *ks = net_generic(net, yamir_netid);
 
-    net = sock_net(skb->sk);
-    ks = net_generic(net, yamir_net_id);
-
+    struct yamir_msg msg;
+    int pid = info->snd_portid;
+    int cmd = info->genlhdr->cmd;
+    int rc;
+	
     mutex_lock(&ks->kyamirnl_mutex);
-    netlink_recv_skb(ks, skb); 
-    mutex_unlock(&ks->kyamirnl_mutex);
-}
 
-// based on dnrmg_send_peer & dnrmg_build_message found in
-// in linux_kernel/net/decnet/netfilter/dn_rtmsg.c
-//
-static struct sk_buff *netlink_build_msg(int type, struct yamir_msg *msg)
-{
-    struct sk_buff *skb;
-    struct nlmsghdr *nlh;
-
-    /* 1. Allocation (Safe for both 2.6.35 and 6.8) */
-    skb = alloc_skb(NLMSG_SPACE(sizeof(*msg)), GFP_ATOMIC);
-    if (!skb) return NULL;
-
-    /* 2. Critical: Portability Fix for HTC Desire (2.6) and modern (6.8)
-       This zeroes out 'pid' OR 'portid' and 'dst_group' simultaneously */
-    memset(&NETLINK_CB(skb), 0, sizeof(struct netlink_skb_parms));
-
-    /* 3. Build message header */
-    nlh = nlmsg_put(skb, 0, 0, type, sizeof(*msg), 0);
-    if (!nlh) {
-        kfree_skb(skb);
-        return NULL;
+    if (!ks->peer_pid) {
+        ks->peer_pid = pid;
+        pr_info("kyamir: netlink-bound pid=%d\n", pid);
     }
 
-    /* 4. Copy payload */
-    memcpy(nlmsg_data(nlh), msg, sizeof(*msg));
+    if (ks->peer_pid != pid) {
+        rc = -EBUSY;
+    }
+    else if (!load_msg(&msg, info)) {
+        rc = -EINVAL;
+    }
+    else {
+        rc = yamir_recv_msg(ks, net, cmd, &msg);
+    }
 
-    return skb;
+    mutex_unlock(&ks->kyamirnl_mutex);
+
+    return rc;
+}
+
+static struct genl_family my_gnl_family;
+
+static bool build_msg(struct sk_buff *skb, int type, struct yamir_msg *msg)
+{
+    pr_debug("kyamir: build_msg-init netid=%d type=%d\n", yamir_netid, type);
+
+    // start
+    void *hdr = genlmsg_put(skb, 0, 0, &my_gnl_family, 0, type);
+    if (!hdr) return false;
+
+    // attrs
+    if (nla_put_u32(skb, YAMIR_ATTR_IP4ADDR, msg->ip4_addr)) return false;
+    if (nla_put_s32(skb, YAMIR_ATTR_IFINDEX, msg->ifindex))  return false;
+
+    // end
+    genlmsg_end(skb, hdr);
+
+    pr_debug("kyamir: build_msg-done netid=%d type=%d\n", yamir_netid, type);
+
+    return true;
 }
 
 // send msg to userspace
-static int yamir_send_msg(struct kyamir_state *ks, int type, __be32 addr, int ifindex)
+static int yamir_send_msg(struct kyamir_state *ks, struct net *net, int type, struct yamir_msg *msg)
 {
-    pr_debug("kyamir:send type=%d addr=%pI4 ifindex=%d\n", type, &addr, ifindex);
+    pr_debug("kyamir: send_msg netid=%d pid=%d type=%d addr=%pI4 ifindex=%d\n", 
+        yamir_netid, ks->peer_pid, type, &msg->ip4_addr, msg->ifindex);
 
-    struct yamir_msg msg = { 
-        .addr = addr,
-        .ifindex = ifindex
-    };
+    int rc;
+    struct sk_buff *skb = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_ATOMIC);
+    if (!skb) {
+        rc = -ENOMEM;
+    }
+    else if (!build_msg(skb, type, msg)) {
+        rc = -EMSGSIZE;
+    }
+    else if (ks->peer_pid) {
+        rc = genlmsg_unicast(net, skb, ks->peer_pid);
+    }
+    else {
+        kfree(skb);
+        rc = -ENOTCONN;
+    }
 
-    struct sk_buff *skb = netlink_build_msg(type, &msg);
-    if (!skb) return -ENOMEM;
-
-    return netlink_broadcast(ks->netlink_sock, skb, 0, NETLINK_YAMIR_GROUP, GFP_USER);
+    return rc;
 }
 
 // if userspace yamir exits -> flush IP packets+routes
@@ -488,11 +488,11 @@ static int kyamir_netlink_notify(struct notifier_block *block,
     void *ptr)
 {
     struct netlink_notify *n = ptr;
-    if (!n || !n->net) return NOTIFY_DONE;
+    if (!n || !n->net || n->protocol != NETLINK_GENERIC) return NOTIFY_DONE;
 
     struct net *net = n->net;
-    struct kyamir_state *ks = net_generic(net, yamir_net_id);
-    if (n->protocol != NETLINK_YAMIR) return NOTIFY_DONE;
+    struct kyamir_state *ks = net_generic(net, yamir_netid);
+
     if (!NOTIFY_ID(n) || NOTIFY_ID(n) != ks->peer_pid) return NOTIFY_DONE;
 
     switch(event) {
@@ -512,24 +512,6 @@ static struct notifier_block kyamir_netlink_notifier = {
     .notifier_call = kyamir_netlink_notify, 
 };
 
-static void kyamir_netlink_deinit(struct kyamir_state *ks)
-{
-    mutex_lock(&ks->kyamirnl_mutex);
-    netlink_kernel_release(ks->netlink_sock);
-    mutex_unlock(&ks->kyamirnl_mutex);
-}
-
-static int kyamir_netlink_init(struct kyamir_state *ks)
-{
-    ks->netlink_sock = kyamir_netlink_kernel_create(kyamir_recv_skb);
-    if (!ks->netlink_sock) {
-        pr_err("kyamir: netlink socket create failed\n");
-        return -1;
-    }
-
-    return 0;
-}
-
 // netfilter hook - IP packet coming into stack
 static unsigned int do_kyamir_nf(struct net *net,
     struct sk_buff *skb,
@@ -541,16 +523,24 @@ static unsigned int do_kyamir_nf(struct net *net,
     int rc = NF_ACCEPT;
     int entry_found;
     struct kyamir_state *ks;
+    struct yamir_msg msg;
+
+    pr_debug("kyamir: nf-hook netid=%d nsid=%u hook=%d in=%d out=%d\n",
+        yamir_netid, net->ns.inum, 
+        hook,
+        in  ? in->ifindex  : -1,
+        out ? out->ifindex : -1);
 
     // accept if not skb
     if (!skb) return rc;
 
-    // acccept if state not found
-    ks = net_generic(net, yamir_net_id);
+    // accept if state not found
+    ks = net_generic(net, yamir_netid);
     if (!ks) return rc;
 
-    if ((ks->flags & HAVE_IFNAME) == 0) return rc;
-    if ((ks->flags & HAVE_IPADDR) == 0) return rc;
+    if ((ks->flags & KSF_IFNAME) == 0) return rc;
+    if ((ks->flags & KSF_IPADDR) == 0) return rc;
+    if (!ks->peer_pid) return rc;
 
     // accept if not valid IPv4 packet, broadcast/multicast
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
@@ -570,6 +560,9 @@ static unsigned int do_kyamir_nf(struct net *net,
         }
     }
 
+    pr_debug("kyamir: nf-pkt netid=%d saddr=%pI4 daddr=%pI4\n",
+        yamir_netid, &iph->saddr, &iph->daddr);
+
     switch(hook) {
     // incoming packets from net device to host, before routing
     case NF_INET_PRE_ROUTING:
@@ -579,7 +572,9 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (iph->daddr == ks->bcast_addr) return rc;
 
         // tell usersppce route is active
-        yamir_send_msg(ks, YAMIR_RT_INUSE, iph->saddr, in->ifindex);
+        msg.ip4_addr = iph->saddr;
+        msg.ifindex = in->ifindex;
+        yamir_send_msg(ks, net, YAMIR_RT_INUSE, &msg);
 
         // always accept if IP packet sent from or to this node
         if (iph->saddr == ks->ip4_addr || iph->daddr == ks->ip4_addr) break;
@@ -588,7 +583,9 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (route_exists(ks, iph->daddr)) break;
 
         // drop packets which we cannot route
-        yamir_send_msg(ks, YAMIR_RT_ERR, iph->daddr, in->ifindex);
+        msg.ip4_addr = iph->daddr;
+        msg.ifindex = in->ifindex;
+        yamir_send_msg(ks, net, YAMIR_RT_ERR, &msg);
         rc = NF_DROP;
         break;
 
@@ -610,7 +607,9 @@ static unsigned int do_kyamir_nf(struct net *net,
         }
 
         if (!entry_found) {
-            yamir_send_msg(ks, YAMIR_RT_NEED, iph->daddr, out->ifindex);
+            msg.ip4_addr = iph->daddr;
+            msg.ifindex = out->ifindex;
+            yamir_send_msg(ks, net, YAMIR_RT_NEED, &msg);
         }
 
         // tell netfilter we will take it from here
@@ -625,7 +624,9 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (iph->daddr == ks->bcast_addr) return rc;
 
         // tell userspace that this route is in use
-        yamir_send_msg(ks, YAMIR_RT_INUSE, iph->daddr, out->ifindex);
+        msg.ip4_addr = iph->daddr;
+        msg.ifindex = out->ifindex;
+        yamir_send_msg(ks, net, YAMIR_RT_INUSE, &msg);
         break;
     }
 
@@ -682,28 +683,36 @@ static struct nf_hook_ops kyamir_hook_ops[] = {
      },
 };
 
-static void kyamir_netfilter_deinit(struct kyamir_state *ks)
+static void kyamir_netfilter_deinit(struct kyamir_state *ks, struct net *net)
 {
-    struct net *net = kyamir_get_net();
     int i = ARRAY_SIZE(kyamir_hook_ops);
     while (i > 0) {
         i--;
         kyamir_unregister_nf_hook(net, &kyamir_hook_ops[i]);
     }
+
+    ks->flags &= ~KSF_NFHOOK;
 }
 
-static int kyamir_netfilter_init(struct kyamir_state *ks)
+// register netfilter hooks
+static int kyamir_netfilter_init(struct kyamir_state *ks, struct net *net)
 {
-    struct net *net = kyamir_get_net();
+    pr_debug("kyamir: nf-init netid=%d\n", yamir_netid);
+
     int rc = 0, i;
     for (i = 0; i < ARRAY_SIZE(kyamir_hook_ops); i++) {
         rc = kyamir_register_nf_hook(net, &kyamir_hook_ops[i]);
         if (rc < 0) {
-            pr_err("kyamir: Failed to register hook %d\n", i);
+            pr_err("kyamir: nf-register failed netid=%d i=%d\n", yamir_netid, i);
             break;
         }
     }
-    if (i == ARRAY_SIZE(kyamir_hook_ops)) return 0;
+
+    if (i == ARRAY_SIZE(kyamir_hook_ops)) {
+        ks->flags |= KSF_NFHOOK;
+        pr_info("kyamir: nf-added netid=%d i=%d\n", yamir_netid, i);
+        return 0;
+    }
 
     // register failed - must cleanup
     while (i > 0) {
@@ -719,7 +728,7 @@ static void load_addr(struct kyamir_state *ks, struct in_ifaddr *ifa)
     ks->ip4_addr   = ifa->ifa_local;
     ks->bcast_addr = ifa->ifa_broadcast;
     ks->addr_mask  = ifa->ifa_mask;
-    ks->flags |= HAVE_IPADDR;
+    ks->flags |= KSF_IPADDR;
 
     pr_info("kyamir: add-addr ifname=%s ip4=%pI4\n", ks->ifname, &ks->ip4_addr);
 }
@@ -728,7 +737,7 @@ static int my_inet_event(struct notifier_block *nb, unsigned long event, void *p
 {
     struct in_ifaddr *ifa = (struct in_ifaddr *) ptr;
     struct net_device *dev = ifa->ifa_dev->dev;
-    struct kyamir_state *ks = net_generic(dev_net(dev), yamir_net_id);
+    struct kyamir_state *ks = net_generic(dev_net(dev), yamir_netid);
 	if (!ks) return NOTIFY_DONE;
 
 	bool addr_add = event == NETDEV_UP || event == NETDEV_CHANGE;
@@ -744,13 +753,37 @@ static struct notifier_block my_inet_nb = {
     .notifier_call = my_inet_event,
 };
 
-static void load_device(struct kyamir_state *ks, struct net_device *dev)
+static void unload_device(struct kyamir_state *ks, 
+    struct net_device *dev, struct net *net)
+{
+    ks->flags &= ~(KSF_IFNAME | KSF_IPADDR);
+    ks->ifindex = -1;
+
+    if (ks->flags & KSF_NFHOOK) {
+	    kyamir_netfilter_deinit(ks, net);
+    }
+}
+
+static void load_device(struct kyamir_state *ks, 
+    struct net_device *dev, struct net *net)
 {
     strscpy(ks->ifname, dev->name, sizeof(ks->ifname));
     ks->ifindex = dev->ifindex;
-    ks->flags |= HAVE_IFNAME;
+    ks->flags |= KSF_IFNAME;
 
-    pr_info("kyamir add-if ifname=%s ifindex=%d\n", ks->ifname, ks->ifindex);
+    pr_info("kyamir: add-if netid=%d ifname=%s ifindex=%d\n", 
+        yamir_netid, ks->ifname, ks->ifindex);
+
+	kyamir_netfilter_init(ks, net);
+
+    // load ip4_addr
+    struct in_device *in_dev = in_dev_get(dev);
+    if (in_dev) {
+        if (in_dev->ifa_list) {
+            load_addr(ks, in_dev->ifa_list);
+        }
+        in_dev_put(in_dev);
+    }
 }
 
 static int my_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr) 
@@ -760,21 +793,19 @@ static int my_netdev_event(struct notifier_block *nb, unsigned long event, void 
 	if (!dev) return NOTIFY_DONE;
     struct net *net = dev_net(dev);
 	if (!net) return NOTIFY_DONE;
-    struct kyamir_state *ks = net_generic(net, yamir_net_id);
+    struct kyamir_state *ks = net_generic(net, yamir_netid);
 	if (!ks) return NOTIFY_DONE;
+    if (strcmp(dev->name, ifname)) return NOTIFY_DONE;
 
-	bool dev_add = event == NETDEV_REGISTER || event == NETDEV_CHANGENAME;
-
-    if (dev_add && !strcmp(dev->name, ifname)) {
-        load_device(ks, dev);
-        struct in_device *in_dev = in_dev_get(dev);
-        if (in_dev) {
-            if (in_dev->ifa_list) {
-                load_addr(ks, in_dev->ifa_list);
-            }
-            in_dev_put(in_dev);
-        }
-	}
+    switch(event) {
+    case NETDEV_REGISTER:
+    case NETDEV_CHANGENAME:
+        load_device(ks, dev, net);
+        break;
+    case NETDEV_UNREGISTER:
+        unload_device(ks, dev, net);
+        break;
+    }
 
     return NOTIFY_DONE;
 }
@@ -785,21 +816,27 @@ static struct notifier_block my_netdev_nb = {
 
 static void __net_exit my_exit_net(struct net *net)
 {
-    struct kyamir_state *dymo = net_generic(net, yamir_net_id);
+    pr_debug("kyamir: exit_net netid=%d nsid=%u\n", yamir_netid, net->ns.inum);
 
-	if (!dymo) return;
+    struct kyamir_state *ks = net_generic(net, yamir_netid);
 
-	route_deinit(dymo);
-   	queue_deinit(dymo);
-   	kyamir_netlink_deinit(dymo);
-	kyamir_netfilter_deinit(dymo);
+	if (!ks) return;
+
+	route_deinit(ks);
+   	queue_deinit(ks);
+
+    if (ks->flags & KSF_NFHOOK) {
+	    kyamir_netfilter_deinit(ks, net);
+    }
 
 	return;
 }
 
 static int __net_init my_init_net(struct net *net) 
 {
-    struct kyamir_state *ks = net_generic(net, yamir_net_id);
+    struct kyamir_state *ks = net_generic(net, yamir_netid);
+
+    pr_debug("kyamir: init_net netid=%d nsid=%u\n", yamir_netid, net->ns.inum);
 
     // init packet queue
     rwlock_init(&ks->queue_lock); 
@@ -814,9 +851,8 @@ static int __net_init my_init_net(struct net *net)
 	// init interface
     ks->ifindex = -1; 
 	ks->ifname[0] = '\0';
-
-	if (kyamir_netlink_init(ks)) return -1;
-	if (kyamir_netfilter_init(ks)) return -1;
+    ks->flags = 0;
+    ks->peer_pid = 0;
 
     return 0;
 }
@@ -824,41 +860,63 @@ static int __net_init my_init_net(struct net *net)
 static struct pernet_operations my_net_ops = {
     .init = my_init_net,
     .exit = my_exit_net, 
-    .id   = &yamir_net_id,
+    .id   = &yamir_netid,
     .size = sizeof(struct kyamir_state),
 };
 
-static int __init dymo_init(void)
-{
-    int rc = register_pernet_subsys(&my_net_ops);
-    if (rc < 0) {
-        pr_err("kyamir: egister pernet failed");
-        return rc;
-    }
+// netlink cmds sent to kyamir
 
-    rc = register_netdevice_notifier(&my_netdev_nb);
-    if (rc < 0)  {
-        pr_err("kyamir: register netdevice failed");
-        unregister_pernet_subsys(&my_net_ops);
-    }
+static const struct genl_multicast_group my_groups[] = {
+    { .name = "events", }, 
+};
 
-    rc = register_inetaddr_notifier(&my_inet_nb); 
-    if (rc < 0) {
-        pr_err("kyamir: register inet_addr failed");
-        unregister_netdevice_notifier(&my_netdev_nb);
-        unregister_pernet_subsys(&my_net_ops);
-    }
+static const struct nla_policy my_policy[YAMIR_ATTR_MAX + 1] = {
+    [YAMIR_ATTR_IP4ADDR] = { .type = NLA_U32 },
+    [YAMIR_ATTR_IFINDEX] = { .type = NLA_S32 },
+};
 
-    rc = netlink_register_notifier(&kyamir_netlink_notifier);
-    if (rc < 0 ) {
-        unregister_inetaddr_notifier(&my_inet_nb); 
-        unregister_netdevice_notifier(&my_netdev_nb);
-        unregister_pernet_subsys(&my_net_ops);
-    }
+static const struct genl_ops my_ops[] = {
+    {
+        .cmd     = YAMIR_RT_REG,
+        .flags   = 0,
+        .doit    = netlink_recv_skb,
+        .flags   = GENL_ADMIN_PERM,
+        .policy  = my_policy,
+    },
+    {
+        .cmd     = YAMIR_RT_NONE,
+        .flags   = 0,
+        .doit    = netlink_recv_skb,
+        .flags   = GENL_ADMIN_PERM,
+        .policy  = my_policy,
+    },
+    {
+        .cmd     = YAMIR_RT_ADD,
+        .flags   = 0,
+        .doit    = netlink_recv_skb,
+        .flags   = GENL_ADMIN_PERM,
+        .policy  = my_policy,
+    },
+    {
+        .cmd     = YAMIR_RT_DEL,
+        .flags   = 0,
+        .doit    = netlink_recv_skb,
+        .flags   = GENL_ADMIN_PERM,
+        .policy  = my_policy,
+    },
+};
 
-    pr_info("kyamir: module loaded. NET ID:%d\n", yamir_net_id);
-    return 0;
-}
+static struct genl_family my_gnl_family = {
+    .name     = YAMIR_NL_NAME, 
+    .version  = 1,
+    .maxattr  = YAMIR_ATTR_MAX,
+    .netnsok  = true,
+    .module   = THIS_MODULE,
+    .ops      = my_ops,
+    .n_ops    = ARRAY_SIZE(my_ops),
+    .mcgrps   = my_groups,
+    .n_mcgrps = ARRAY_SIZE(my_groups),
+};
 
 static void __exit dymo_exit(void)
 {
@@ -866,8 +924,59 @@ static void __exit dymo_exit(void)
     unregister_inetaddr_notifier(&my_inet_nb); 
     unregister_netdevice_notifier(&my_netdev_nb);
     unregister_pernet_subsys(&my_net_ops);
+    genl_unregister_family(&my_gnl_family);
 
-    pr_info("kyamir: DYMO module unloaded!\n");
+    pr_info("kyamir: ko-unloaded netid=%d\n", yamir_netid);
+}
+
+static int __init dymo_init(void)
+{
+    int rc;
+
+    rc = genl_register_family(&my_gnl_family);
+    if (rc < 0) {
+        pr_err("kyamir: register netlink failed");
+        return rc;
+    }
+
+    rc = register_pernet_subsys(&my_net_ops);
+    if (rc < 0) {
+        pr_err("kyamir: register pernet failed");
+        goto err_unreg_gnl;
+    }
+
+    rc = register_netdevice_notifier(&my_netdev_nb);
+    if (rc < 0)  {
+        pr_err("kyamir: register netdevice failed");
+        goto err_unreg_pernet;
+    }
+
+    rc = register_inetaddr_notifier(&my_inet_nb); 
+    if (rc < 0) {
+        pr_err("kyamir: register inet_addr failed");
+        goto err_unreg_netdev;
+    }
+
+    rc = netlink_register_notifier(&kyamir_netlink_notifier);
+    if (rc < 0 ) {
+        pr_err("kyamir: register netlink notifier failed");
+        goto err_unreg_inet;
+    }
+
+    pr_info("kyamir: ko-loaded netid=%d\n", yamir_netid);
+    return 0;
+
+// cleanup
+err_unreg_inet:
+    unregister_inetaddr_notifier(&my_inet_nb); 
+err_unreg_netdev:
+    unregister_netdevice_notifier(&my_netdev_nb);
+err_unreg_pernet:
+    unregister_pernet_subsys(&my_net_ops);
+err_unreg_gnl:
+    genl_unregister_family(&my_gnl_family);
+
+    return rc;
 }
 
 module_init(dymo_init);

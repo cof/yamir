@@ -3,7 +3,7 @@
  *
  * This a userspace IP router that supports
  *
- *  - route updates via its kernel-space module kyamir
+ *  - kyamir updates via netlink-generic
  *  - kernel-space route mangement via rtnetlink
  *  - route discovery via DYMO protocol
  *  - uses PacketBB codec to read/write messages
@@ -49,6 +49,7 @@
 #include <linux/types.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/genetlink.h>
 #include <unistd.h>
 
 #include "netlink.h"
@@ -74,6 +75,7 @@
 // default settings from draft-ietf-manet-dymo-21.txt
 #define DISCOVERY_ATTEMPTS_MAX 3
 
+
 // signal
 volatile sig_atomic_t keep_running = 0;
 
@@ -84,6 +86,7 @@ struct yamir_state {
     int port;
     int daemonize;
     int if_index;
+    const char *log_file;
 
     // dymo udp
     int dymo_fd;
@@ -96,6 +99,7 @@ struct yamir_state {
 
     // our kernel module
     int kyamir_fd;
+    int family_id;
     struct sockaddr_nl yamir_addr;
 
     // linux rtnetlink module
@@ -207,12 +211,13 @@ static inline bool yamir_islocaladdr(struct yamir_state *s, uint32_t addr)
 static const char *yamir_type_tostr(uint32_t type)
 {
     static char *names[] = {
-        [YAMIR_RT_NEED]  = "ROUTE_NEED",
-        [YAMIR_RT_INUSE] = "ROUTE_INUSE",
-        [YAMIR_RT_ERR]   = "ROUTE_ERR",
-        [YAMIR_RT_NONE]  = "ROUTE_NONE",
-        [YAMIR_RT_ADD]   = "ROUTE_ADD",
-        [YAMIR_RT_DEL]   = "ROUTE_DEL"
+        [YAMIR_RT_REG]   = "RT_REG",
+        [YAMIR_RT_NEED]  = "RT_NEED",
+        [YAMIR_RT_INUSE] = "RT_INUSE",
+        [YAMIR_RT_ERR]   = "RT_ERR",
+        [YAMIR_RT_NONE]  = "RT_NONE",
+        [YAMIR_RT_ADD]   = "RT_ADD",
+        [YAMIR_RT_DEL]   = "RT_DEL"
     };
 
     return type < ARR_LEN(names) ? names[type] : "UNKNOWN";
@@ -301,11 +306,13 @@ static int recvfrom_wstate(int fd, size_t vlen,
 
 static int netlink_send(int fd, void *data, size_t len)
 {
+    log_debug("fd=%d len=%zu", fd, len);
+
     struct iovec iov = { .iov_base = data, .iov_len =  len };
     struct sockaddr_nl nl_dst = { .nl_family = AF_NETLINK };
 
     struct msghdr mh = {
-        .msg_name = &nl_dst,
+        .msg_name    = &nl_dst,
         .msg_namelen = sizeof(nl_dst),
         .msg_iov = &iov,
         .msg_iovlen = 1,
@@ -1211,57 +1218,149 @@ static void dymo_req_done(struct dymo_req *req, int rc)
 // send msg to kyamir
 static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
 {
-    log_debug("type=%s addr=%s ifindex=%d",
-        yamir_type_tostr(type), addr_tostr(msg->addr), msg->ifindex);
+    log_debug("family_id=%d type=%s addr=%s ifindex=%d",
+        ys->family_id,
+        yamir_type_tostr(type), addr_tostr(msg->ip4_addr), msg->ifindex);
 
-    char buf[NLMSG_SPACE(sizeof(*msg))];
-
-    memset(buf, 0, sizeof(buf));
-
-    // first setup the netlink header
-    struct nlmsghdr *nlh = (struct nlmsghdr *) buf;
-    nlh->nlmsg_len = sizeof(buf);
-    nlh->nlmsg_type = type;
+    struct genl_request req = { 0 };
+    struct nlmsghdr *nlh = &req.n;
+    nlh->nlmsg_len   = NLMSG_SPACE(GENL_HDRLEN);
+    nlh->nlmsg_type  = ys->family_id;
     nlh->nlmsg_flags = NLM_F_REQUEST;
-    nlh->nlmsg_seq = 0; 
-    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_pid   = getpid();
 
     // setup our message
-    struct yamir_msg *data = NLMSG_DATA(nlh);
-    *data = *msg;
+    req.g.cmd = type;
+    req.g.version = 1;
 
-    return netlink_send(ys->kyamir_fd, buf, nlh->nlmsg_len);
+    struct nlattr *nla;
+
+    // add attrs
+    nla = mkptr(&req, NLMSG_SPACE(GENL_HDRLEN));
+    nla->nla_type = YAMIR_ATTR_IP4ADDR;
+    nla->nla_len = sizeof(uint32_t) + NLA_HDRLEN;
+    memcpy(mkptr(nla, NLA_HDRLEN), &msg->ip4_addr, sizeof(uint32_t));
+    nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
+
+    nla = mkptr(&req, nlh->nlmsg_len); 
+    nla->nla_type = YAMIR_ATTR_IFINDEX;
+    nla->nla_len = sizeof(int32_t) + NLA_HDRLEN;
+    memcpy(mkptr(nla, NLA_HDRLEN), &msg->ifindex, sizeof(int32_t));
+    nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
+
+    return netlink_send(ys->kyamir_fd, &req, nlh->nlmsg_len);
 }
 
 // process yamir_msg from kyamir
 static void kyamir_process_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
 {
     log_debug("type=%s addr=%s ifindex=%d", 
-        yamir_type_tostr(type), addr_tostr(msg->addr), msg->ifindex);
+        yamir_type_tostr(type), addr_tostr(msg->ip4_addr), msg->ifindex);
 
     switch(type) {
-    case YAMIR_RT_NEED:  route_discover(ys, msg->addr, msg->ifindex); break;
-    case YAMIR_RT_INUSE: route_inuse(ys, msg->addr, msg->ifindex); break;
-    case YAMIR_RT_ERR:   route_err(ys, msg->addr, msg->ifindex); break;
+    case YAMIR_RT_NEED:  route_discover(ys, msg->ip4_addr, msg->ifindex); break;
+    case YAMIR_RT_INUSE: route_inuse(ys, msg->ip4_addr, msg->ifindex); break;
+    case YAMIR_RT_ERR:   route_err(ys, msg->ip4_addr, msg->ifindex); break;
     default: log_debug("Unsupported type %d", type); break;
     }
+}
+
+static bool parse_genl_attrs(struct yamir_msg *msg, struct nlmsghdr *nlh)
+{
+    struct genlmsghdr *gnlh = NLMSG_DATA(nlh);
+    struct nlattr *nla = mkptr(gnlh, GENL_HDRLEN);
+    int attr_len = nlh->nlmsg_len - NLMSG_SPACE(GENL_HDRLEN);
+
+    while (attr_len >= (int) sizeof(struct nlattr)) {
+		// joker checks
+        if (nla->nla_len < sizeof(struct nlattr)) return false;
+		if (nla->nla_len > attr_len) return false;
+
+        switch (nla->nla_type) {
+		case YAMIR_ATTR_IP4ADDR: 
+            memcpy(&msg->ip4_addr, mkptr(nla, NLA_HDRLEN), sizeof(msg->ip4_addr));
+            break;
+		case YAMIR_ATTR_IFINDEX: 
+            memcpy(&msg->ifindex, mkptr(nla, NLA_HDRLEN), sizeof(msg->ifindex));
+            break;
+		default: 
+            // Ignore unknown attributes
+			break;
+        }
+        // move to next 4-byte aligned attribute
+        int advance = NLA_ALIGN(nla->nla_len);
+        attr_len -= advance;
+        nla = mkptr(nla, advance);
+    }
+
+    return true;
+}
+
+static int parse_family_id(struct nlmsghdr *nlh)
+{
+    struct genlmsghdr *gnlh = NLMSG_DATA(nlh);
+    struct nlattr *nla = mkptr(gnlh, GENL_HDRLEN);
+    int attr_len = nlh->nlmsg_len - NLMSG_SPACE(GENL_HDRLEN);
+
+    log_debug("attr_len=%d", attr_len);
+
+    // 2. Loop through controller response attributes
+    while (attr_len >= (int)sizeof(struct nlattr)) {
+		// joker checks
+        if (nla->nla_len < sizeof(struct nlattr)) return -1;
+		if (nla->nla_len > attr_len) return -1;
+
+        if (nla->nla_type == CTRL_ATTR_FAMILY_ID) {
+            uint16_t fid;
+            memcpy(&fid, mkptr(nla, NLA_HDRLEN), sizeof(fid));
+            log_debug("family_id=%d", fid);
+            return fid;
+        }
+
+        // move to next 4-byte aligned attribute
+        int advance = NLA_ALIGN(nla->nla_len);
+        attr_len -= advance;
+        nla = mkptr(nla, advance);
+    }
+
+    return -1; // Not found
 }
 
 // process mmsg from kyamir
 static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
 {
-    log_debug("len=%u", mmsg->msg_len);
-
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
+	log_debug("msg_len=%zu, nlh_type=%u, nlh_len=%u", 
+          msg_len, nlh->nlmsg_type, nlh->nlmsg_len);
+
     for (; NLMSG_OK(nlh, msg_len); nlh = NLMSG_NEXT(nlh, msg_len)) {
+        log_debug("nlh_type=%u nlh_len=%u", nlh->nlmsg_type, nlh->nlmsg_len);
         if (nlh->nlmsg_type == NLMSG_DONE) break;
-        if (nlh->nlmsg_type == NLMSG_ERROR) continue;
-        struct yamir_msg *msg = NLMSG_DATA(nlh);
-        size_t len = NLMSG_PAYLOAD(nlh, 0);
-        if (len < sizeof(*msg)) continue;
-        kyamir_process_msg(ys, nlh->nlmsg_type, msg);
+        if (nlh->nlmsg_type == NLMSG_ERROR) {
+            struct nlmsgerr *err = NLMSG_DATA(nlh);
+            log_debug("recv nl-err %d (%s)", err->error, strerror(-err->error));
+            continue;
+        }
+        if (nlh->nlmsg_type == GENL_ID_CTRL) {
+            ys->family_id = parse_family_id(nlh);
+            if (ys->family_id != -1) {
+                // register with kyamir
+                struct yamir_msg msg = { 0 };
+                kyamir_send_msg(ys, YAMIR_RT_REG, &msg);
+            }
+            continue;
+        }
+        if (nlh->nlmsg_type != ys->family_id) continue;
+        if (nlh->nlmsg_len < NLMSG_LENGTH(GENL_HDRLEN)) continue;
+        // get type
+        struct genlmsghdr *gnlh = NLMSG_DATA(nlh);
+        int type = gnlh->cmd;
+        // get attrs
+        struct yamir_msg msg = { 0 };
+        if (!parse_genl_attrs(&msg, nlh)) continue;
+        kyamir_process_msg(ys, type, &msg);
     }
 }
 
@@ -1270,13 +1369,12 @@ static int kyamir_recv(struct yamir_state *ys)
 {
     int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, MSG_DONTWAIT, NULL);
 
-    log_debug("recv kyamird_fd=%d nr=%d", ys->kyamir_fd, nr);
+    log_debug("recv kyamir_fd=%d nr=%d", ys->kyamir_fd, nr);
 
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return log_errno_rf("recvmmsg %d failed", ys->kyamir_fd);
     }
-
 
     for (int i = 0; i < nr; i++) {
         kyamir_process_mmsg(ys, &ys->msgs[i]);
@@ -1387,22 +1485,54 @@ static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
     return netlink_send(ys->route_fd, &req, req.nlm.nlmsg_len);
 }
 
-// setup NETLINK interface to kyamir kernel module and linux routing tables
+static int resolv_netlink(int fd, const char *name)
+{
+    struct genl_request req = {0};
+    
+    // netlink header
+    req.n.nlmsg_type = GENL_ID_CTRL;
+    req.n.nlmsg_flags = NLM_F_REQUEST;
+    req.n.nlmsg_seq = 1;
+    req.n.nlmsg_pid = getpid();
+    
+    // request GETFAMILY
+    req.g.cmd = CTRL_CMD_GETFAMILY;
+    req.g.version = 1;
+    
+    // need CTRL_ATTR_FAMILY_NAME
+    struct nlattr *nla = (struct nlattr *)((char *)&req + NLMSG_SPACE(GENL_HDRLEN));
+    nla->nla_type = CTRL_ATTR_FAMILY_NAME;
+    nla->nla_len = strlen(name) + 1 + NLA_HDRLEN;
+    strcpy((char *)nla + NLA_HDRLEN, name);
+    
+    req.n.nlmsg_len = NLMSG_SPACE(GENL_HDRLEN) + NLMSG_ALIGN(nla->nla_len);
+
+    ssize_t rc = send(fd, &req, req.n.nlmsg_len, 0);
+    if (rc == -1) return -1;
+
+    return 0;
+}
+
+// setup NETLINK interface to kyamir and linux rtnetlink
 static int netlink_init(struct yamir_state *ys)
 {
-    log_debug("init kyamir-nl=%d route-nl=%d", NETLINK_YAMIR, NETLINK_ROUTE);
+    log_debug("init kyamir-nl=%d route-nl=%d", NETLINK_GENERIC, NETLINK_ROUTE);
 
     // setup netlink interface to our kernel module
-    ys->kyamir_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_YAMIR);
+    ys->kyamir_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
     if (ys->kyamir_fd == -1) return log_errno_rf("socket netlink_yamir");
 
     // bind to address
     struct sockaddr_nl *nl_addr = &ys->yamir_addr;
     nl_addr->nl_family = AF_NETLINK;
     nl_addr->nl_pid = getpid();
-    nl_addr->nl_groups = NETLINK_YAMIR_GROUP; //NETLINK_DYMO_GROUP; 
+    nl_addr->nl_groups = 0;
     int ec = bind(ys->kyamir_fd, (struct sockaddr *) nl_addr, sizeof(*nl_addr));
     if (ec == -1) return log_errno_rf("bind netlink_yamir");
+
+    // resolve netlink family
+    ec = resolv_netlink(ys->kyamir_fd, YAMIR_NL_NAME);
+    if (ec) return log_errno_rf("resolv_netlink %s", YAMIR_NL_NAME);
 
     // setup interface to kernel routing module
     ys->route_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
@@ -1424,10 +1554,10 @@ static int netlink_init(struct yamir_state *ys)
 
 static int dymo_init(struct yamir_state *ys)
 {
-    log_debug("init ifname=%s", ys->if_name);
+    log_debug("ifname=%s port=%d", ys->if_name, ys->port);
 
     // create the socket 
-    int sock_type =  SOCK_DGRAM | SOCK_NONBLOCK;
+    int sock_type = SOCK_DGRAM | SOCK_NONBLOCK;
     ys->dymo_fd = socket(AF_INET, sock_type, 0);
     if (ys->dymo_fd == -1) return log_errno_rf("dymo_init: socket");
 
@@ -1489,7 +1619,7 @@ static int dymo_init(struct yamir_state *ys)
     // bind socket to 0.0.0.0:port
     sin->sin_family = AF_INET;
     sin->sin_addr.s_addr = htonl(INADDR_ANY);
-    sin->sin_port = htons(DYMO_PORT);
+    sin->sin_port = htons(ys->port);
     ec = bind(ys->dymo_fd, (struct sockaddr *) sin, sizeof(*sin));
     if (ec == -1) return log_errno_rf("bind_dymo");
 
@@ -1536,23 +1666,31 @@ static int get_opts(struct yamir_state *ys, int argc, char *argv[])
     int opt;
     size_t len;
 
-    while ((opt = getopt(argc, argv, "i:p:l:dh")) != -1) {
+    while ((opt = getopt(argc, argv, "dhi:p:l:f:")) != -1) {
         switch(opt) {
+        case 'd': ys->daemonize = 1; break;
+        case 'h': usage(argv[0]); exit(0); break;
         case 'i':  // interface
             len = strlen(optarg);
             if (len >= sizeof(ys->if_name)) return log_error_rf("ifname len %zu too big", len);
             memcpy(ys->if_name, optarg, len);
             break;
-        case 'p': ys->port   = atoi(optarg); break;
+        case 'p': ys->port  = atoi(optarg); break;
         case 'l': log_level = atoi(optarg); break;
-        case 'd': ys->daemonize = 1; break;
-        case 'h': usage(argv[0]); exit(0); break;
+        case 'f': ys->log_file = optarg; break;
         default: return log_error_rf("Unknown option %c\n", opt);
         }
     }
 
     // check reqired args
     if (!ys->if_name[0]) return log_error_rf("Missing ifname");
+
+    if (ys->log_file) {
+        // log file redirect
+        FILE *fp = fopen(ys->log_file, "a");
+        if (!fp) return log_error_rf("Open log file %s failed", ys->log_file);
+        log_init(fp, log_level);
+    }
 
     return 0;
 }
@@ -1581,6 +1719,7 @@ static struct yamir_state *yamir_create(void)
     list_init(&ys->routes);
     list_init(&ys->free_routes);
 
+    ys->family_id = -1;
     ys->dymo_fd   = -1;
     ys->kyamir_fd = -1;
     ys->route_fd  = -1;
