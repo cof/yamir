@@ -1,12 +1,12 @@
 /*
  * YAMIR - Yet Another MANET IP Router 
  *
- * This a userspace IP router that supports
+ * This a userspace IP router with
  *
  *  - kyamir updates via netlink-generic
- *  - kernel-space route mangement via rtnetlink
+ *  - route mangement via rtnetlink
  *  - route discovery via DYMO protocol
- *  - uses PacketBB codec to read/write messages
+ *  - PacketBB codec to read/write messages
  *
  * Usage:  
  *  
@@ -1368,20 +1368,20 @@ static bool parse_genl_attrs(struct yamir_msg *msg, struct nlmsghdr *nlh)
     int attr_len = nlh->nlmsg_len - NLMSG_SPACE(GENL_HDRLEN);
 
     while (attr_len >= (int) sizeof(struct nlattr)) {
-		// joker checks
+        // joker checks
         if (nla->nla_len < sizeof(struct nlattr)) return false;
-		if (nla->nla_len > attr_len) return false;
+        if (nla->nla_len > attr_len) return false;
 
         switch (nla->nla_type) {
-		case YAMIR_ATTR_IP4ADDR: 
+        case YAMIR_ATTR_IP4ADDR: 
             memcpy(&msg->ip4_addr, mkptr(nla, NLA_HDRLEN), sizeof(msg->ip4_addr));
             break;
-		case YAMIR_ATTR_IFINDEX: 
+        case YAMIR_ATTR_IFINDEX: 
             memcpy(&msg->ifindex, mkptr(nla, NLA_HDRLEN), sizeof(msg->ifindex));
             break;
-		default: 
+        default: 
             // Ignore unknown attributes
-			break;
+            break;
         }
         // move to next 4-byte aligned attribute
         int advance = NLA_ALIGN(nla->nla_len);
@@ -1402,9 +1402,9 @@ static int parse_family_id(struct nlmsghdr *nlh)
 
     // 2. Loop through controller response attributes
     while (attr_len >= (int)sizeof(struct nlattr)) {
-		// joker checks
+        // joker checks
         if (nla->nla_len < sizeof(struct nlattr)) return -1;
-		if (nla->nla_len > attr_len) return -1;
+        if (nla->nla_len > attr_len) return -1;
 
         if (nla->nla_type == CTRL_ATTR_FAMILY_ID) {
             uint16_t fid;
@@ -1428,7 +1428,7 @@ static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
-	log_debug("msg_len=%zu, nlh_type=%u, nlh_len=%u", 
+    log_debug("msg_len=%zu, nlh_type=%u, nlh_len=%u", 
           msg_len, nlh->nlmsg_type, nlh->nlmsg_len);
 
     for (; NLMSG_OK(nlh, msg_len); nlh = NLMSG_NEXT(nlh, msg_len)) {

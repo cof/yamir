@@ -2,7 +2,7 @@
 
 YAMIR is a reactive IP router designed for **Mobile Ad-hoc Networks (MANET)**. 
 
-It uses a hybrid design where a kernel module detects route requirements and a userspace daemon performs route discovery and maintenace.
+Uses a kernel module to detect route requirements and a userspace daemon for route discovery and maintenance.
 
 - `kyamir` - linux kernel module using netfilter hooks to intercept IP packets
 - `yamird` - userpace daemon uses DYMO protocol for route discovery and rtnetlink for route maintenace
@@ -32,17 +32,19 @@ It uses a hybrid design where a kernel module detects route requirements and a u
 ## Testing
 
 A VM `test-yamir` can be used to test the router.
+Simply run the following.
 
     $ make test-yamir
 
 This will build and install the VM as follows
 
-- create the `test-yamir` VM based based on Alpine Linux 
-- copy kyamir source, yamird and create_manet.sh to VM /home/alpine
+- creates the `test-yamir` VM based based on Alpine Linux 
+- copies kyamir source, yamird and create_manet.sh to VM /home/alpine
 - build kyamird kernel module for VM
 - run setcap on yamird for VM
+- ssh to VM as alpine@test-yamir
 
-To control the manet use create_manet.sh script
+To control the MANET use create_manet.sh script
 
 - start: starts the MANET
 - stop: stops the MANET
@@ -50,7 +52,7 @@ To control the manet use create_manet.sh script
 - status: report yamir,kyamird status
 - reset: clears log files
 
-**Example: Start MANET**
+**Example: Starting the MANET**
 
     $ doas ./create_manet.sh start
     + ip link add mac-wlan0 type dummy
@@ -80,6 +82,16 @@ To control the manet use create_manet.sh script
     64 bytes from 172.0.0.20: seq=2 ttl=64 time=7.727 ms
     64 bytes from 172.0.0.20: seq=3 ttl=64 time=7.659 ms
     64 bytes from 172.0.0.20: seq=4 ttl=64 time=7.956 ms
+
+**Example: Stopping the MANET**
+
+    $ doas ./create_manet.sh stop
+    + pkill yamird
+    + rmmod /home/alpine/kyamir/kyamir.ko
+    + ip netns del yamir2
+    + ip netns del yamir1
+    + ip link del mac-wlan0
+
 
 
 
