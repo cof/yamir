@@ -381,7 +381,7 @@ static int run_test(enum test_cmd cmd,
         pkt_buf_init(&buf, tmp, len);
         rc = pkt_buf_hdr_dec(&buf, &hdr);
         if (rc) return ERR_PKT;
-        while (pkt_buf_avail(&buf)) {
+        while (pkt_buf_rem(&buf)) {
             rc = pkt_buf_msg_dec(&buf, &msg);
             if (rc) return ERR_MSG;
         }

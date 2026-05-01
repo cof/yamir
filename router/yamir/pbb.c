@@ -106,7 +106,7 @@ static inline uint32_t dec_u32(uint8_t *ptr, int size)
 static int dec_err(struct pkt_buf *buf, size_t len, enum pbb_field field)
 {
     log_debug("decode_error(%s) at offset %zu. Have %zu need %zu",
-        field2str[field], pkt_buf_used(buf), pkt_buf_avail(buf), len);
+        field2str[field], pkt_buf_pos(buf), pkt_buf_rem(buf), len);
 
     return -1;
 }
@@ -183,7 +183,7 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
 
 static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
-    log_debug("buf_len=%zu", pkt_buf_avail(buf));
+    log_debug("buf_len=%zu", pkt_buf_rem(buf));
 
     memset(tlv, 0, sizeof(*tlv));
 
@@ -247,7 +247,7 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 
 static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -261,7 +261,7 @@ static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
     struct pkt_buf tlv_buf = PKT_BUF_INIT(ptr, tlvs_len);
     struct pbb_tlv tlv;
 
-    while (pkt_buf_avail(&tlv_buf))  {
+    while (pkt_buf_rem(&tlv_buf))  {
         if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         load_node_tlv(ab, &tlv);
     }
@@ -328,7 +328,7 @@ static void dec_ab_expand(struct pbb_ab *ab, struct pbb_msg *msg)
 // decode address block
 static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     uint8_t *ptr = dec_next(buf, 1, PBB_ADRBLK_NUM_ADDR);
     if (!ptr) return -1;
@@ -388,7 +388,7 @@ static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 
 static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     uint8_t head[32];
     uint8_t tail[32];
@@ -403,7 +403,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
         .addr_len = msg->addr_len
     };
 
-    while (pkt_buf_avail(buf)) {
+    while (pkt_buf_rem(buf)) {
         if (dec_ab_now(buf, &ab)) return -1;
         dec_ab_expand(&ab, msg);
         if (dec_addr_tlvs(buf, &ab)) return -1;
@@ -415,7 +415,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 
 static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -431,7 +431,7 @@ static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
     struct pkt_buf tlv_buf = PKT_BUF_INIT(ptr, tlvs_len);
     struct pbb_tlv tlv;
 
-    while (pkt_buf_avail(&tlv_buf))  {
+    while (pkt_buf_rem(&tlv_buf))  {
         if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         switch(tlv.type) {
         case PBB_TLV_DID:
@@ -488,7 +488,7 @@ static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 decode <message>
 static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     pbb_msg_reset(msg);
 
@@ -518,7 +518,7 @@ static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 
 static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -534,7 +534,7 @@ static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
     struct pkt_buf tlv_buf = PKT_BUF_INIT(ptr, tlvs_len);
     struct pbb_tlv tlv;
 
-    while (pkt_buf_avail(&tlv_buf))  {
+    while (pkt_buf_rem(&tlv_buf))  {
         if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         if (hdr->num_tlv < ARR_LEN(hdr->tlvs)) {
             hdr->tlvs[hdr->num_tlv++] = tlv;
@@ -547,7 +547,7 @@ static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int dec_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
-    log_debug("buf_avail=%zu", pkt_buf_avail(buf));
+    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
 
     pbb_hdr_reset(hdr);
 
@@ -630,7 +630,7 @@ static inline size_t push_mem(struct pkt_buf *buf, uint8_t *data, size_t len)
 // 5.4.1 TLVs
 static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
-    log_debug("buf_used=%zu type=%d", pkt_buf_used(buf), tlv->type);
+    log_debug("buf_pos=%zu type=%d", pkt_buf_pos(buf), tlv->type);
 
     uint8_t flags = tlv->flags;
     uint8_t type, ext;
@@ -681,6 +681,8 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 // encode tlv-block for pkt-header
 static int enc_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
+    log_debug("buf_pos=%zu tlvs=%d", pkt_buf_pos(buf), hdr->num_tlv);
+
     // tlvs-length
     uint8_t *ptr = pkt_buf_mkspace(buf, 2);
     if (!ptr) return -1;
@@ -698,6 +700,9 @@ static int enc_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int enc_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
+    log_debug("buf_pos=%zu flags=0x%x version=%d tlvs=%d",
+        pkt_buf_pos(buf), hdr->flags, hdr->version, hdr->num_tlv);
+
     uint8_t *ptr = pkt_buf_mkspace(buf, 1);
     if (!ptr) return -1;
     *ptr = (hdr->version << 4) | (hdr->flags & 0xf);
@@ -715,7 +720,7 @@ static int enc_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_used=%zu naddr=%d", pkt_buf_used(buf), ab->num_addr);
+    log_debug("buf_pos=%zu naddr=%d", pkt_buf_pos(buf), ab->num_addr);
 
     uint8_t value[4];
     struct pbb_tlv tlv = {
@@ -751,7 +756,7 @@ static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 // 5.3 encode <address-block>
 static int enc_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_used=%zu flags=0x%x naddr=%d", pkt_buf_used(buf), ab->flags, ab->num_addr);
+    log_debug("buf_pos=%zu flags=0x%x naddr=%d", pkt_buf_pos(buf), ab->flags, ab->num_addr);
 
     if (!push_val(buf, ab->num_addr, 1)) return -1;
     if (!push_val(buf, ab->flags, 1)) return -1;
@@ -892,7 +897,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
 
 static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu nodes=%d", pkt_buf_used(buf), msg->num_node);
+    log_debug("buf_pos=%zu nodes=%d", pkt_buf_pos(buf), msg->num_node);
 
     uint8_t prefix[PBB_MSG_MAXNODE];
     struct pbb_ab ab = { 
@@ -920,7 +925,7 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 // encode well-known tlvs for message
 static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg) 
 {
-    log_debug("buf_used=%zu did=%u", pkt_buf_used(buf), msg->did);
+    log_debug("buf_pos=%zu did=%u", pkt_buf_pos(buf), msg->did);
 
     struct pbb_tlv tlv;
     uint8_t value[4];
@@ -938,7 +943,7 @@ static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 // encode tlv-block for message
 static int enc_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu tlvs=%d", pkt_buf_used(buf), msg->num_tlv);
+    log_debug("buf_pos=%zu tlvs=%d", pkt_buf_pos(buf), msg->num_tlv);
 
     // tlvs-length
     uint8_t *ptr = pkt_buf_mkspace(buf, 2);
@@ -960,7 +965,7 @@ static int enc_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 // encode optional fields
 static int enc_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu", pkt_buf_used(buf));
+    log_debug("buf_pos=%zu", pkt_buf_pos(buf));
 
     if (pbb_msg_orig(msg) && !push_mem(buf, msg->orig_addr, msg->addr_len)) return -1;
     if (pbb_msg_hlim(msg) && !push_val(buf, msg->hop_limit, 1)) return -1;
@@ -973,7 +978,8 @@ static int enc_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 encode <message>
 static int enc_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_used=%zu type=%d flags=0x%x", pkt_buf_used(buf), msg->type, msg->flags);
+    log_debug("buf_pos=%zu buf_len=%zu type=%d flags=0x%x", 
+        pkt_buf_pos(buf), pkt_buf_len(buf), msg->type, msg->flags);
 
     // msg-header type|flags|addr-length|size|
     uint8_t *hdr = pkt_buf_mkspace(buf, 4);
@@ -1021,7 +1027,7 @@ ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len)
     int rc = enc_pbb_hdr(&buf, hdr);
     if (rc) return rc;
 
-    return pkt_buf_used(&buf);
+    return pkt_buf_pos(&buf);
 }
 
 ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len)
@@ -1031,7 +1037,7 @@ ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len)
     int rc = dec_pbb_hdr(&buf, hdr);
     if (rc) return rc;
 
-    return pkt_buf_used(&buf);
+    return pkt_buf_pos(&buf);
 }
 
 // encode MANET message
@@ -1042,7 +1048,7 @@ ssize_t pbb_msg_enc(struct pbb_msg *msg, void *mem, size_t len)
     int rc = enc_pbb_msg(&buf, msg);
     if (rc) return rc;
 
-    return pkt_buf_used(&buf);
+    return pkt_buf_pos(&buf);
 }
 
 // decode MANET message
@@ -1053,7 +1059,7 @@ ssize_t pbb_msg_dec(struct pbb_msg *msg, void *mem, size_t len)
     int rc = dec_pbb_msg(&buf, msg);
     if (rc) return rc;
 
-    return pkt_buf_used(&buf);
+    return pkt_buf_pos(&buf);
 }
 
 // encode pkt-header to buffer
@@ -1081,7 +1087,7 @@ int pkt_buf_msg_dec(struct pkt_buf *buf, struct pbb_msg *msg)
 
 size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 {
-    size_t len = pkt_buf_avail(buf);
+    size_t len = pkt_buf_rem(buf);
     char *str = pkt_buf_ptr(buf);
 
     va_list args;
@@ -1174,7 +1180,7 @@ size_t pbb_node_puts(struct pkt_buf *buf, struct pbb_node *mn, int addr_len)
     if (pbb_node_seqn(mn)) pbb_printf(buf, " seqn=%u", mn->seqnum);
     if (pbb_node_pref(mn)) pbb_printf(buf, " pref=%u", mn->prefix);
 
-    return pkt_buf_used(buf);
+    return pkt_buf_pos(buf);
 }
 
 const char *pbb_node_tostr(struct pbb_node *mn, int addr_len)
@@ -1224,7 +1230,6 @@ uint8_t pbb_str_totype(const char *str)
     return atoi(str);
 }
 
-
 int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len)
 {
     struct pkt_buf buf = PKT_BUF_INIT(str, len);
@@ -1254,5 +1259,5 @@ int pbb_msg_tostr(struct pbb_msg *msg, char *str, size_t len)
     }
 
     // return nw
-    return pkt_buf_used(&buf);
+    return pkt_buf_pos(&buf);
 }

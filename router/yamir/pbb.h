@@ -84,14 +84,19 @@ static inline void pkt_buf_reset(struct pkt_buf *buf)
     buf->ptr = buf->data;
 }
 
-static inline size_t pkt_buf_avail(struct pkt_buf *buf)
+static inline size_t pkt_buf_rem(struct pkt_buf *buf)
 {
     return buf->end - buf->ptr;
 }
 
-static inline size_t pkt_buf_used(struct pkt_buf *buf)
+static inline size_t pkt_buf_pos(struct pkt_buf *buf)
 {
     return buf->ptr - buf->data;
+}
+
+static inline size_t pkt_buf_len(struct pkt_buf *buf)
+{
+    return buf->end - buf->data;
 }
 
 static inline bool pkt_buf_end(struct pkt_buf *buf)
@@ -101,13 +106,13 @@ static inline bool pkt_buf_end(struct pkt_buf *buf)
 
 static inline void pkt_buf_inc(struct pkt_buf *buf, size_t len)
 {
-    if (len > pkt_buf_avail(buf)) return;
+    if (len > pkt_buf_rem(buf)) return;
     buf->ptr += len;
 }
 
 static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
 {
-    if (len > pkt_buf_avail(buf)) return NULL;
+    if (len > pkt_buf_rem(buf)) return NULL;
 
     void *ptr = buf->ptr;
     buf->ptr += len;

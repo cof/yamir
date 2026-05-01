@@ -700,9 +700,9 @@ static int dymo_msg_send(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = addr;
     sin.sin_port = htons(DYMO_PORT);
-    size_t len = pkt_buf_used(&buf);
+    size_t len = pkt_buf_pos(&buf);
 
-    log_debug("sendto len=%zu dst=%s", len, sockaddr_tostr(&sin));
+    log_debug("sendto pkt_len=%zu dst=%s", len, sockaddr_tostr(&sin));
 
     ssize_t rc = sendto(ys->dymo_fd, wbuf, len, 0, (struct sockaddr *) &sin, sizeof(sin));
     if (rc == -1) return log_errno_rf("send_msg");
@@ -1237,7 +1237,7 @@ static int dymo_process_mmsg(struct yamir_state *ys,
     int ec = pkt_buf_hdr_dec(&buf, &hdr);
     if (ec) return ec;
 
-    while (pkt_buf_avail(&buf)) {
+    while (pkt_buf_rem(&buf)) {
         struct pbb_msg msg;
         ec = pkt_buf_msg_dec(&buf, &msg);
         if (ec) continue;
