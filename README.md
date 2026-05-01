@@ -4,7 +4,7 @@ YAMIR is a **Mobile Ad-hoc Networks (MANET)** platform.
 
 It consists of 3 parts
 
-- `Router` -  Linux MANET router for requiremnts, discovery and managment
+- `Router` -  Linux MANET router for requirements, discovery and management
 - `Android` - Android application with GUI and backend
 - `Linphone`- SIP client for making voice/video calls
 
@@ -12,7 +12,7 @@ It consists of 3 parts
 ## Background & History
 
 YAMIR was originally part of final year college project on mesh comms.
-It showed how sim-free voice and video calls could be made using telco networks built out of household applicanses suchs as laptops and smartphones.
+It showed how sim-free voice and video calls could be made using telco networks built out of household appliances suchs as laptops and smartphones.
 
 The idea of mesh-network infrastructure has been at the back of my mind since the early 2000s, sparked by the rise of smartphones and smart mesh ideas from the likes of Cory Doctorow, Neal Stephenson, and Charles Stross. When Android arrived in 2008 —running the Linux kernel under the hood—it really piqued my interest. That interest finally saw the light of day as my final year college project back in 2012. 
 
