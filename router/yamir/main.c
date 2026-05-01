@@ -872,16 +872,27 @@ static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
     return 0; 
 }
 
-// fixup target+origin ptrs
-static void fixup_nodes(struct pbb_msg *msg)
+// fixup target,origin nodes
+static int fixup_nodes(struct pbb_msg *msg)
 {
-    if (msg->num_node > 0) msg->target = &msg->nodes[0];
-    if (msg->num_node > 1) msg->origin = &msg->nodes[1];
+    int skip = 0;
+
+    if (msg->num_node > 0) {
+        msg->target = &msg->nodes[0];
+        skip++;
+    }
+
+    if (msg->num_node > 1) {
+        msg->origin = &msg->nodes[1];
+        skip++;
+    }
+
+    return skip;
 }
 
 static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv_state *rs)
 {
-    fixup_nodes(rreq);
+    int skip = fixup_nodes(rreq);
     log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rreq));
 
     // check required fields present
@@ -891,10 +902,11 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
     int orig_superior = route_update(ys, rreq->type, rreq->origin, rs->saddr, rs->ifindex);
 
     // additional nodes 
-    for (int i = 0; i < rreq->num_node; i++) {
+    for (int i = skip; i < rreq->num_node; i++) {
         struct pbb_node *mn = &rreq->nodes[i];
         if (!route_update(ys, rreq->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
+            log_debug("invalid-route node %u", i);
         }
     }
 
@@ -911,7 +923,7 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
 
 static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv_state *rs)
 {
-    fixup_nodes(rrep);
+    int skip = fixup_nodes(rrep);
     log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rrep));
 
     // check required fields present
@@ -921,10 +933,11 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv
     int orig_superior = route_update(ys, rrep->type, rrep->origin, rs->saddr, rs->ifindex);
 
     // additional nodes 
-    for (int i = 0; i < rrep->num_node; i++) {
+    for (int i = skip; i < rrep->num_node; i++) {
         struct pbb_node *mn = &rrep->nodes[i];
         if (!route_update(ys, rrep->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
+            log_debug("invalid-route node %u", i);
         }
     }
 
@@ -984,16 +997,23 @@ static int handle_rerr(struct yamir_state *ys, struct pbb_msg *rerr, struct recv
     for (int i = 0; i < rerr->num_node; i++) {
         struct pbb_node *mn = &rerr->nodes[i];
         if (!route_broken(ys, mn, rs->saddr)) {
-            mn->flags |= PBB_NF_SKIP;
             num_skip++;
+            mn->flags |= PBB_NF_SKIP;
+            log_debug("valid-route node %d", i);
         }
     }
 
     // discard if no unreachable nodes left
-    if (num_skip == rerr->num_node) return 0;
+    if (num_skip == rerr->num_node) {
+        log_debug("zero-nodes skip=%d nodes=%d", num_skip, rerr->num_node);
+        return 0;
+    }
 
     // discard if hop limit reached
-    if (!dec_hop_limit(rerr)) return 0;
+    if (!dec_hop_limit(rerr)) {
+        log_debug("zero hlimit %d", rerr->hop_limit);
+        return 0;
+    }
 
     // relay rerr
     // not sure what standard means by here by NextHopAddress
@@ -1048,8 +1068,10 @@ static struct dymo_req *find_req(struct yamir_state *ys, uint32_t addr)
 
 static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
 {
-    struct pbb_msg msg;
+    log_debug("addr=%s seqnum=%u hcount=%d hlimit=%d",
+        addr_tostr(req->addr), req->seqnum, req->hop_count, MSG_HOPLIMIT);
 
+    struct pbb_msg msg;
     pbb_msg_reset(&msg);
     
     // TODO set hoplimit using ring search RFC3561
@@ -1080,12 +1102,6 @@ static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
     msg.origin = origin;
     origin->ip4_addr = ys->local_addr;
     origin->flags |= PBB_NF_SEQN;
-
-    // multicast request
-    log_debug("Sending RREQ target=%s origin=%s seqnum=%d",  
-        addr_tostr(target->ip4_addr), 
-        addr_tostr(origin->ip4_addr),
-        origin->seqnum);
 
     dymo_msg_send(ys, &msg, ys->mcast_addr);
 }

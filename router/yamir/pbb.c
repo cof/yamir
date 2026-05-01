@@ -132,12 +132,12 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
         idx_stop  = idx_end;
         break;
     case TLVF_SINGLEINDEX:
-        idx_start = tlv->index_start;
-        idx_stop  = tlv->index_start;
+        idx_start = tlv->idx_start;
+        idx_stop  = tlv->idx_start;
         break;
     case TLVF_MULTIINDEX:
-        idx_start = tlv->index_start;
-        idx_stop  = tlv->index_stop;
+        idx_start = tlv->idx_start;
+        idx_stop  = tlv->idx_stop;
         break;
     default:
         idx_start = 0;
@@ -149,16 +149,16 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
     if (tlv->flags & TLVF_VALUE) {
         int num_val = idx_stop - idx_start + 1;
         single_len = tlv->flags & TLVF_MULTIVALUE
-            ? tlv->length / num_val
-            : tlv->length;
+            ? tlv->vlen / num_val
+            : tlv->vlen;
     }
 
     for (int i = idx_start; i <= idx_stop; i++) {
         uint8_t *ptr = NULL;
         if (tlv->flags & TLVF_VALUE) {
             ptr = tlv->flags & TLVF_MULTIVALUE
-                ? tlv->value + (i - idx_start) * single_len
-                : tlv->value;
+                ? tlv->val + (i - idx_start) * single_len
+                : tlv->val;
         }
         struct pbb_node *mn = ab->nodes[i];
         if (!mn) continue;
@@ -183,7 +183,7 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
 
 static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
-    log_debug("buf_len=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     memset(tlv, 0, sizeof(*tlv));
 
@@ -207,15 +207,15 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     case TLVF_SINGLEINDEX: 
         ptr = dec_next(buf, 1, PBB_TLV_INDEXSTART);
         if (!ptr) return -1;
-        tlv->index_start = dec_u32(ptr, 1);
+        tlv->idx_start = dec_u32(ptr, 1);
         break;
     case TLVF_MULTIINDEX:
         ptr = dec_next(buf, 1, PBB_TLV_INDEXSTART);
         if (!ptr) return -1;
-        tlv->index_start = dec_u32(ptr, 1);
+        tlv->idx_start = dec_u32(ptr, 1);
         ptr = dec_next(buf, 1, PBB_TLV_INDEXSTOP);
         if (!ptr) return -1;
-        tlv->index_stop = dec_u32(ptr, 1);
+        tlv->idx_stop = dec_u32(ptr, 1);
         break;
     }
 
@@ -224,30 +224,30 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     case TLVF_VALUE:
         ptr = dec_next(buf, 1, PBB_TLV_LENGTH);
         if (!ptr) return -1;
-        tlv->length = dec_u32(ptr, 1);
-        ptr = dec_next(buf, tlv->length, PBB_TLV_VALUE);
+        tlv->vlen = dec_u32(ptr, 1);
+        ptr = dec_next(buf, tlv->vlen, PBB_TLV_VALUE);
         if (!ptr) return -1;
-        tlv->value = ptr;
+        tlv->val = ptr;
         break;
     case TLVF_VALUE | TLVF_EXTVALUE:
         ptr = dec_next(buf, 2, PBB_TLV_LENGTH);
         if (!ptr) return -1;
-        tlv->length = dec_u32(ptr, 2);
-        ptr = dec_next(buf, tlv->length, PBB_TLV_VALUE);
+        tlv->vlen = dec_u32(ptr, 2);
+        ptr = dec_next(buf, tlv->vlen, PBB_TLV_VALUE);
         if (!ptr) return -1;
-        tlv->value = ptr;
+        tlv->val = ptr;
         break;
     }
 
     log_debug("pbb-tlv [type=%d flags=0x%0x idx_start=%d idx_end=%d len=%d]",
-        tlv->type, tlv->flags, tlv->index_start, tlv->index_stop, tlv->length);
+        tlv->type, tlv->flags, tlv->idx_start, tlv->idx_stop, tlv->vlen);
 
     return 0;
 }
 
 static int dec_addr_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -328,7 +328,7 @@ static void dec_ab_expand(struct pbb_ab *ab, struct pbb_msg *msg)
 // decode address block
 static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     uint8_t *ptr = dec_next(buf, 1, PBB_ADRBLK_NUM_ADDR);
     if (!ptr) return -1;
@@ -388,7 +388,7 @@ static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
 
 static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     uint8_t head[32];
     uint8_t tail[32];
@@ -415,7 +415,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 
 static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -435,7 +435,7 @@ static int dec_msg_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
         if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
         switch(tlv.type) {
         case PBB_TLV_DID:
-            msg->did = dec_u32(tlv.value, tlv.length);
+            msg->did = dec_u32(tlv.val, tlv.vlen);
             break;
         default:
             // add to unknown tlvs
@@ -488,7 +488,7 @@ static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 decode <message>
 static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     pbb_msg_reset(msg);
 
@@ -518,7 +518,7 @@ static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 
 static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     // tlvs-length
     uint8_t *ptr = dec_next(buf, 2, PBB_TLVBLK_LENGTH);
@@ -547,7 +547,7 @@ static int dec_hdr_tlvs(struct pkt_buf *buf, struct pbb_hdr *hdr)
 
 static int dec_pbb_hdr(struct pkt_buf *buf, struct pbb_hdr *hdr)
 {
-    log_debug("buf_avail=%zu", pkt_buf_rem(buf));
+    log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
     pbb_hdr_reset(hdr);
 
@@ -630,8 +630,6 @@ static inline size_t push_mem(struct pkt_buf *buf, uint8_t *data, size_t len)
 // 5.4.1 TLVs
 static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 {
-    log_debug("buf_pos=%zu type=%d", pkt_buf_pos(buf), tlv->type);
-
     uint8_t flags = tlv->flags;
     uint8_t type, ext;
 
@@ -645,6 +643,9 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
         flags |= TLVF_TYPEEXT;
     }
 
+    log_debug("buf_pos=%zu type=%d ext=%d flags=0x%x vlen=%d",
+        pkt_buf_pos(buf), type, ext, flags, tlv->vlen);
+
     if (!push_val(buf, type, 1)) return -1;
     if (!push_val(buf, flags, 1)) return -1;
 
@@ -655,23 +656,23 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     // table 3
     switch(tlv->flags & (TLVF_SINGLEINDEX | TLVF_MULTIINDEX)) {
     case TLVF_SINGLEINDEX: 
-        if (!push_val(buf, tlv->index_start, 1)) return -1;
+        if (!push_val(buf, tlv->idx_start, 1)) return -1;
         break;
     case TLVF_MULTIINDEX:
-        if (!push_val(buf, tlv->index_start, 1)) return -1;
-        if (!push_val(buf, tlv->index_stop, 1)) return -1;
+        if (!push_val(buf, tlv->idx_start, 1)) return -1;
+        if (!push_val(buf, tlv->idx_stop, 1)) return -1;
         break;
     }
 
     // table 4
     switch(tlv->flags & (TLVF_VALUE | TLVF_EXTVALUE)) {
     case TLVF_VALUE:
-        if (!push_val(buf, tlv->length, 1)) return -1;
-        if (tlv->length && !push_mem(buf, tlv->value, tlv->length)) return -1;
+        if (!push_val(buf, tlv->vlen, 1)) return -1;
+        if (tlv->vlen && !push_mem(buf, tlv->val, tlv->vlen)) return -1;
         break;
     case TLVF_VALUE | TLVF_EXTVALUE:
-        if (!push_val(buf, tlv->length, 2)) return -1;
-        if (tlv->length && !push_mem(buf, tlv->value, tlv->length)) return -1;
+        if (!push_val(buf, tlv->vlen, 2)) return -1;
+        if (tlv->vlen && !push_mem(buf, tlv->val, tlv->vlen)) return -1;
         break;
     }
 
@@ -723,10 +724,7 @@ static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
     log_debug("buf_pos=%zu naddr=%d", pkt_buf_pos(buf), ab->num_addr);
 
     uint8_t value[4];
-    struct pbb_tlv tlv = {
-        .flags = TLVF_SINGLEINDEX | TLVF_VALUE,
-        .value = value
-    };
+    struct pbb_tlv tlv;
 
     // tlv-length
     uint8_t *ptr = pkt_buf_mkspace(buf, 2);
@@ -734,15 +732,22 @@ static int enc_ab_tlvs(struct pkt_buf *buf, struct pbb_ab *ab)
 
     for (int i = 0; i < ab->num_addr; i++) {
         struct pbb_node *mn = ab->nodes[i];
-        tlv.index_start = i;
         if (pbb_node_seqn(mn)) {
+            pbb_tlv_reset(&tlv);
             tlv.type = PBB_TLV_SEQNUM;
-            tlv.length = pack_u32(value, mn->seqnum);
+            tlv.flags = TLVF_SINGLEINDEX | TLVF_VALUE;
+            tlv.vlen = pack_u32(value, mn->seqnum);
+            tlv.val = value;
+            tlv.idx_start = i;
             if (enc_pbb_tlv(buf, &tlv)) return -1;
         }
         if (pbb_node_dist(mn)) {
+            pbb_tlv_reset(&tlv);
             tlv.type = PBB_TLV_DIST;
-            tlv.length = pack_u32(value, mn->dist);
+            tlv.flags = TLVF_SINGLEINDEX | TLVF_VALUE;
+            tlv.vlen = pack_u32(value, mn->dist);
+            tlv.val = value;
+            tlv.idx_start = i;
             if (enc_pbb_tlv(buf, &tlv)) return -1;
         }
     }
@@ -934,8 +939,8 @@ static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 
     tlv.type = PBB_TLV_DID;
     tlv.flags = TLVF_VALUE;
-    tlv.length = pack_u32(value, msg->did);
-    tlv.value = value;
+    tlv.vlen = pack_u32(value, msg->did);
+    tlv.val = value;
 
     return enc_pbb_tlv(buf, &tlv);
 }

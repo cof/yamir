@@ -1,0 +1,10 @@
+# encode DMYO request 
+ENC_START
+    pkt: ver:0
+    msg: type:RREQ hlimit:10 taddr:8.8.8.8 oaddr:172.0.0.1
+ENC_END
+# encode DMYO response
+ENC_START
+    pkt: ver:0
+    msg: type:RREP hlimit:10 taddr:172.0.0.10,seqnum=0,flags=0x1 oaddr:172.0.0.20,seqnum=1
+ENC_END

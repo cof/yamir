@@ -140,12 +140,11 @@ size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
 struct pbb_tlv {
     uint16_t type;
     uint8_t flags;
-    uint8_t index_start;
-    uint8_t index_stop;
-    uint16_t length;
-    uint8_t *value;
+    uint8_t idx_start;
+    uint8_t idx_stop;
+    uint16_t vlen;
+    uint8_t *val;
 };
-
 
 // <tlv-flags> 8-bit field - network order (i.e MSB is bit 0) 
 #define TLVF_TYPEEXT     (1 << 7)
@@ -155,16 +154,23 @@ struct pbb_tlv {
 #define TLVF_EXTVALUE    (1 << 3)
 #define TLVF_MULTIVALUE  (1 << 2)
 
-// well nown tlvs
+// well known tlvs
 #define PBB_TLV_VALIDITY (1 << 8)
+#define PBB_TLV_SEQNUM   (224 << 8)
+#define PBB_TLV_DIST     (7 << 8)
 #define PBB_TLV_DID      (9 << 8)
-#define PBB_TLV_SEQNUM  (10 << 8)
-#define PBB_TLV_DIST    (11 << 8)
 
 // helpers
 static inline bool pbb_tlv_hastypeext(const struct pbb_tlv *tlv)
 {
     return tlv->flags & TLVF_TYPEEXT;
+}
+
+static inline void pbb_tlv_reset(struct pbb_tlv *tlv)
+{
+    tlv->type  = 0;
+    tlv->flags = 0;
+    tlv->vlen  = 0;
 }
 
 /* MANET pkt-header  5.1 */
@@ -231,7 +237,6 @@ static inline struct pbb_node *pbb_node_reset(struct pbb_node *mn)
 #define PBB_NF_DIST  (1 << 2)
 #define PBB_NF_VTIM  (1 << 3)
 #define PBB_NF_SEQN  (1 << 4)
-
 
 // helpers
 static inline bool pbb_node_skip(const struct pbb_node *mn)

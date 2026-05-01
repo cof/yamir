@@ -31,4 +31,55 @@ It uses a hybrid design where a kernel module detects route requirements and a u
 
 ## Testing
 
+A VM `test-yamir` can be used to test the router.
+
+    $ make test-yamir
+
+This will build and install the VM as follows
+
+- create the `test-yamir` VM based based on Alpine Linux 
+- copy kyamir source, yamird and create_manet.sh to VM /home/alpine
+- build kyamird kernel module for VM
+- run setcap on yamird for VM
+
+To control the manet use create_manet.sh script
+
+- start: starts the MANET
+- stop: stops the MANET
+- ping: starts route discovery
+- status: report yamir,kyamird status
+- reset: clears log files
+
+**Example: Start MANET**
+
+    $ doas ./create_manet.sh start
+    + ip link add mac-wlan0 type dummy
+    + ip link set mac-wlan0 up
+    + ip netns add yamir1
+    + ip link add link mac-wlan0 name mv1 type macvlan mode bridge
+    + ip link set mv1 netns yamir1
+    + ip netns exec yamir1 ip link set mv1 name wlan0
+    + ip netns exec yamir1 ip addr add 172.0.0.10/24 dev wlan0
+    + ip netns exec yamir1 ip link set wlan0 up
+    + ip netns add yamir2
+    + ip link add link mac-wlan0 name mv1 type macvlan mode bridge
+    + ip link set mv1 netns yamir2
+    + ip netns exec yamir2 ip link set mv1 name wlan0
+    + ip netns exec yamir2 ip addr add 172.0.0.20/24 dev wlan0
+    + ip netns exec yamir2 ip link set wlan0 up
+    + insmod /home/alpine/kyamir/kyamir.ko ifname=wlan0
+    + ip netns exec yamir1 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 4
+    + ip netns exec yamir2 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 4
+
+**Example: Start route discovery**
+
+    $ doas ./create_manet.sh ping
+    + ip netns exec yamir1 ping -I wlan0 172.0.0.20
+    PING 172.0.0.20 (172.0.0.20): 56 data bytes
+    64 bytes from 172.0.0.20: seq=1 ttl=64 time=7.599 ms
+    64 bytes from 172.0.0.20: seq=2 ttl=64 time=7.727 ms
+    64 bytes from 172.0.0.20: seq=3 ttl=64 time=7.659 ms
+    64 bytes from 172.0.0.20: seq=4 ttl=64 time=7.956 ms
+
+
 

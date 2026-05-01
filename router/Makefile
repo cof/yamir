@@ -9,7 +9,7 @@
 # test       : run packetbb tests
 # test-yamir : build VM for test
 #
-YAMIR  = yamird
+YAMIR = yamird
 KYAMIR_DIR = kyamir
 BUILD_DIR = build
 
@@ -19,7 +19,6 @@ CTAGS = ctags
 MAKEFLAGS += --no-print-directory
 
 include scripts/verbose.mk
-
 
 # compiler flags
 # --------------
@@ -133,7 +132,7 @@ $(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
-TEST_FILES = tests/rfc5444_core.txt
+TEST_FILES = tests/rfc5444_core.txt tests/dymo.txt
 
 # test
 # ----
