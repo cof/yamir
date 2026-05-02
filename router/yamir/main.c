@@ -274,7 +274,7 @@ static const char *route_tostr(struct dymo_rt *dr)
     if (!dr) return "<none>";
 
     snprintf(buf, size, 
-        "addr=%s/%d gwaddr=%s gwif=%d seqnum=%d dist=%d flags=0x%x",
+        "addr=%s/%d gwaddr=%s gwifindex=%d seqnum=%d dist=%d flags=0x%x",
         addr_tostr(dr->addr), dr->prefix, 
         addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex, 
         dr->seqnum, dr->dist, 
@@ -621,7 +621,7 @@ static int route_update(struct yamir_state *ys,
     int msg_type, struct pbb_node *mn,
     uint32_t nexthop_addr, uint32_t nexthop_ifindex)
 {
-    log_debug("type=%d mnaddr=%s gwaddr=%s gwif=%d", 
+    log_debug("type=%d mnaddr=%s gwaddr=%s gwifindex=%d", 
         msg_type, addr_tostr(mn->ip4_addr), 
         addr_tostr(nexthop_addr), nexthop_ifindex);
 
@@ -662,11 +662,13 @@ static int route_update(struct yamir_state *ys,
     dr->age_timer = timer_add(&ys->timers, DR_AGE_MIN, age_timeout_cb, dr);
     dr->seqnum_timer = timer_add(&ys->timers, DR_SEQNUM_AGE_MAX, seqnum_timeout_cb, dr);
 
-    // add route forwarding
+    // add route forwarding - TODO need nl ACK
     dr->flags |= DRF_ADD_PENDING;
     struct yamir_msg msg = {  dr->addr, dr->nexthop_ifindex };
     kyamir_send_msg(ys, YAMIR_RT_ADD, &msg);
     rtnl_send_route(ys, RTM_NEWROUTE, dr);
+
+    log_info("+", "Added route %s", route_tostr(dr));
     
     return 1;
 }

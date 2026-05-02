@@ -16,17 +16,32 @@
  * struct pbb_msg  - MANET message 
  * struct pbb_node - Address info (addr-blocks/tlv-block)
  *
+ *
  * API
  * ----
- * ppb_hdr_enc(hdr, buf, len) : encode pkt-header to memory buffer
- * ppb_hdr_dec(hdr, buf, len) : decode pkt-header from memory buffer
- * pbb_msg_enc(msg, buf, len) : encode message to memory buffer
- * pbb_msg_dec(msg, buf, len) : decode message from memory buffer
+ * PKT_BUF_INIT(mem, len)        : macro to init buffer
+ * pkt_buf_init(buf, mem, len)   : init buffer with memory
+ * pkt_buf_start(buf)            : return buffer start pointer
+ * pkt_buf_ptr(buf)              : return buffer position pointer
+ * pkt_buf_reset(buf)            : reset buffer position pointer to start
+ * pkt_buf_end(bif)              : true if buffer pos at end
+ * bkt_buf_len(buf)              : return buffer size
+ * pkt_buf_rem(buf)              : return remaining read/write space in buffer
+ * pkt_buf_pos(buf)              : return buffer read/write index
+ * pkt_buf_inc(buf)              : increment buffer read/write index
+ * pkt_buf_endz(buf)             : set buffer end to nul char if space
+ * pkt_buf_mkspace(buf, len)     : return position pointer and increment if space else null
+ * pkt_buf_printf(buf, fmt, ...) : printf fmt to buffer
  * -
- * pkt_buf_hdr_enc(buf, hdr)  : encode pkt-header to pkt-buffer
- * pkt_buf_hdr_dec(buf, hdr)  : decode pkt-header from pkt-buffer
- * pkt_buf_msg_enc(buf, msg)  : encode message to pkt-buffer
- * pkt_buf_msg_dec(buf, msg)  : decode message from pkt-buffer
+ * ppb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
+ * ppb_hdr_dec(hdr, buf, len) : decode pkt-header from buffer
+ * pbb_msg_enc(msg, buf, len) : encode message to buffer
+ * pbb_msg_dec(msg, buf, len) : decode message from buffer
+ * -
+ * pkt_buf_hdr_enc(buf, hdr)  : encode pkt-header to pkt buf
+ * pkt_buf_hdr_dec(buf, hdr)  : decode pkt-header from pkt buf
+ * pkt_buf_msg_enc(buf, msg)  : encode message to pkt buf
+ * pkt_buf_msg_dec(buf, msg)  : decode message from pkt buff
  * -
  * pbb_str_toaddr(str, addr)  : string to IP address
  * pbb_addr_tostr(len, addr)  : IP adders to string
@@ -69,6 +84,7 @@ static inline void pkt_buf_init(struct pkt_buf *buf, void *data, size_t len)
     buf->end  = buf->ptr + len;
 }
 
+
 static inline void *pkt_buf_start(struct pkt_buf *buf)
 {
     return buf->data;
@@ -84,14 +100,9 @@ static inline void pkt_buf_reset(struct pkt_buf *buf)
     buf->ptr = buf->data;
 }
 
-static inline size_t pkt_buf_rem(struct pkt_buf *buf)
+static inline bool pkt_buf_end(struct pkt_buf *buf)
 {
-    return buf->end - buf->ptr;
-}
-
-static inline size_t pkt_buf_pos(struct pkt_buf *buf)
-{
-    return buf->ptr - buf->data;
+    return buf->ptr >= buf->end;
 }
 
 static inline size_t pkt_buf_len(struct pkt_buf *buf)
@@ -99,15 +110,25 @@ static inline size_t pkt_buf_len(struct pkt_buf *buf)
     return buf->end - buf->data;
 }
 
-static inline bool pkt_buf_end(struct pkt_buf *buf)
+static inline size_t pkt_buf_pos(struct pkt_buf *buf)
 {
-    return buf->ptr >= buf->end;
+    return buf->ptr - buf->data;
+}
+
+static inline size_t pkt_buf_rem(struct pkt_buf *buf)
+{
+    return buf->end - buf->ptr;
 }
 
 static inline void pkt_buf_inc(struct pkt_buf *buf, size_t len)
 {
     if (len > pkt_buf_rem(buf)) return;
     buf->ptr += len;
+}
+
+static inline void pkt_buf_endz(struct pkt_buf *buf)
+{
+    if (buf->ptr < buf->end) *buf->ptr = '\0';
 }
 
 static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
@@ -120,14 +141,8 @@ static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
     return ptr;
 }
 
-static inline void pkt_buf_endz(struct pkt_buf *buf)
-{
-    if (buf->ptr < buf->end) *buf->ptr = '\0';
-}
-
 size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
-
 
 // 5.3 <addr-flags> 8-bit field - network order (i.e MSB is bit 0) 
 #define PBB_ABF_HEAD     (1 << 7) // ahashead

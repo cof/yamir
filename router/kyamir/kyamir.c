@@ -4,12 +4,23 @@
  * ----------------------------------
  * Intercepts IP packets via netfilter hooks for userspace route discovery.
  *
+ * Uses
+ * ====
+ * - NETLINK_GENERIC
+ * - pernet subsystem
+ * - netdevice notifier
+ * - inetaddr notifier
+ * - netlink notfier
+ * - netfilter hooks
+ *
+ * netfilter
+ * =========
  * NF_INET_PRE_ROUTING  : packet has arrived before routing decision
  * NF_INET_LOCAL_OUT    : local socket sending packet before routing decision
  * NF_INET_POST_ROUTING : packet sent after routing decision
  */
 #include <linux/version.h>
-#define DEBUG
+//#define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -40,14 +51,20 @@ static int kyamir_exiting = false;
 #define ROUTE_MAX_LEN 1024
 #define QUEUE_MAX_LEN 2048
 
+struct yamir_route {
+    struct list_head list; 
+    struct rcu_head rcu;
+    __be32 ip4_addr;
+    uint32_t flags; 
+};
 
 // packets queue waiting
-// based on nf_queue_packet
-struct queue_packet {
+struct yamir_packet {
     struct list_head list;
     struct sk_buff   *skb;
     struct net *net; // namespace pkt came from
-    __be32 addr;
+    __be32 ip4_addr;
+    unsigned long ts_added;
 };
 
 // flags
@@ -57,12 +74,16 @@ struct queue_packet {
 
 struct kyamir_state {
     uint32_t flags;
+    // routes
+    struct list_head routes;
+    spinlock_t route_lock;
+    uint32_t route_count;
     // packet queue
-    rwlock_t queue_lock;
-    struct list_head queue_list;
-    uint32_t numq;
+    struct list_head packets;
+    spinlock_t packet_lock;
+    uint32_t packet_count;
     // netlink 
-    int peer_pid;
+    atomic_t peer_pid;
     struct mutex kyamirnl_mutex;
     // interface
     char ifname[IFNAMSIZ];
@@ -77,6 +98,7 @@ static char *ifname = "wlan0";
 module_param(ifname, charp, 0444);
 MODULE_PARM_DESC(ifname, "Interface name to intercept (e.g. wlan0)");
 
+/*
 static bool route_exists(struct net *net, __be32 ip4_addr) 
 {
     struct rtable *rt;
@@ -88,193 +110,259 @@ static bool route_exists(struct net *net, __be32 ip4_addr)
 
     return true;
 }
+*/
 
-static void queue_flush(struct kyamir_state *ks)
+static const char *hook_tostr(int hook) 
 {
-    struct list_head *ptr, *next;
-    struct queue_packet *pkt;
-
-    pr_debug("kyamir: queue_flush ENTRY\n");
-
-    write_lock_bh(&ks->queue_lock); 
-
-    list_for_each_safe(ptr, next, &ks->queue_list)  {
-        pkt = list_entry(ptr, struct queue_packet, list);
-        // remove from list
-        list_del(&pkt->list);
-        ks->numq--;
-        // release mem
-        if (pkt->skb) kfree_skb(pkt->skb);
-        kfree(pkt);
+    switch (hook) {
+    case NF_INET_PRE_ROUTING:  return "PRE_ROUTING";
+    case NF_INET_LOCAL_IN:     return "LOCAL_IN";
+    case NF_INET_FORWARD:      return "FORWARD";
+    case NF_INET_LOCAL_OUT:    return "LOCAL_OUT";
+    case NF_INET_POST_ROUTING: return "POST_ROUTING";
+    default:                   return "UNKNOWN";
     }
-
-    write_unlock_bh(&ks->queue_lock);
-
-    pr_debug("kyamir: queue_flush EXIT_\n");
 }
 
-static struct queue_packet *dequeue_packet(struct kyamir_state *ks, uint32_t addr)
+
+static void flush_routes(struct kyamir_state *ks)
 {
-    struct queue_packet *pkt, *found;
-    struct list_head *ptr;
+    struct yamir_route *yr, *tmp;
+    
+    spin_lock(&ks->route_lock);
 
-    write_lock_bh(&ks->queue_lock);
+    list_for_each_entry_safe(yr, tmp, &ks->routes, list) {
+        list_del_rcu(&yr->list);
+        kfree_rcu(yr, rcu);
+    }
 
-    found = NULL;
-    list_for_each_prev(ptr, &ks->queue_list) {
-        pkt = list_entry(ptr, struct queue_packet, list);
-        if (pkt->addr == addr) {
-            found = pkt;
-            break;
+    ks->route_count = 0;
+    spin_unlock(&ks->route_lock);
+}
+
+static int add_route(struct kyamir_state *ks, __be32 ip4_addr)
+{
+    struct yamir_route *yr = kmalloc(sizeof(*yr), GFP_KERNEL);
+    if (!yr) return -ENOMEM;
+
+    yr->ip4_addr = ip4_addr;
+    yr->flags = 0;
+
+    spin_lock(&ks->route_lock); 
+    list_add_rcu(&yr->list, &ks->routes);
+    ks->route_count++;
+    spin_unlock(&ks->route_lock);
+
+    return 0;
+}
+
+static void del_route(struct kyamir_state *ks, __be32 ip4_addr)
+{
+    struct yamir_route *yr;
+
+    spin_lock(&ks->route_lock);
+
+    list_for_each_entry(yr, &ks->routes, list) {
+        if (yr->ip4_addr == ip4_addr) {
+            list_del_rcu(&yr->list); 
+            ks->route_count--;
+            spin_unlock(&ks->route_lock);
+            kfree_rcu(yr, rcu); 
+            return;
         }
     }
 
-    if (found) {
-        list_del(&found->list);
-        ks->numq--;
-    }
-
-    write_unlock_bh(&ks->queue_lock);
-
-    return found;
+    spin_unlock(&ks->route_lock);
 }
 
-static int enqueue_packet(
-    struct kyamir_state *ks,
-    struct net *net, struct sk_buff *skb,
-    __be32 addr, int (*okfn) (struct sk_buff *))
+static struct yamir_route *find_route(struct kyamir_state *ks, __be32 addr)
 {
-    struct queue_packet *pkt = kzalloc(sizeof(*pkt), GFP_ATOMIC);
+    pr_debug("kyamir: find_route netid=%d addr=%pI4\n",  kyamir_netid, &addr);
 
-    if (!pkt) {
-        pr_err("kyamir: OOM in enqueue_packet()\n");
+    struct yamir_route *yr;
+
+    rcu_read_lock();
+    list_for_each_entry_rcu(yr, &ks->routes, list) {
+        if (yr->ip4_addr == addr) {
+            rcu_read_unlock();
+            return yr;
+        }
+    }
+    rcu_read_unlock();
+    return NULL;
+}
+
+static void flush_packets(struct kyamir_state *ks)
+{
+    pr_debug("kyamir: flush_packets ENTRY\n");
+
+    struct yamir_packet *yp, *tmp;
+    LIST_HEAD(free_list);
+
+    // move all packets to free list
+    spin_lock_bh(&ks->packet_lock);
+    list_replace_init(&ks->packets, &free_list);
+    ks->packet_count = 0;
+    spin_unlock_bh(&ks->packet_lock);
+
+    // free them
+    list_for_each_entry_safe(yp, tmp, &free_list, list)  {
+        list_del(&yp->list);
+        if (yp->skb) kfree_skb(yp->skb);
+        kfree(yp);
+    }
+
+    pr_debug("kyamir: flush_packets EXIT_\n");
+}
+
+static int add_packet(struct kyamir_state *ks,
+    struct net *net, struct sk_buff *skb,
+    __be32 addr)
+{
+    pr_debug("kyamir: add_packet netid=%d addr=%pI4\n", kyamir_netid, &addr);
+
+    struct yamir_packet *yp = kzalloc(sizeof(*yp), GFP_ATOMIC);
+
+    if (!yp) {
+        pr_err("kyamir: OOM in add_packet\n");
         return -ENOMEM;
     }
 
     // save packet data
-    pkt->skb = skb;
-    pkt->net = net;
-    pkt->addr = addr;
+    yp->skb = skb;
+    yp->net = net;
+    yp->ip4_addr = addr;
+    yp->ts_added = jiffies;
 
-    write_lock_bh(&ks->queue_lock);
+    spin_lock_bh(&ks->packet_lock);
 
     int rc = 0;
-    if (ks->numq >= QUEUE_MAX_LEN) {
-        pr_warn("kyamir: max packet queue length reached\n");
-        kfree(pkt);
-        pkt = NULL;
-        rc = -ENOSPC;
-    }
-    else {
-        list_add(&pkt->list, &ks->queue_list);
-        ks->numq++;
-    }
+    struct yamir_packet *tmp;
 
-    write_unlock_bh(&ks->queue_lock);
-
-    return rc;
-}
-
-static void queue_drop(struct kyamir_state *ks, uint32_t addr)
-{
-    struct queue_packet *pkt;
-    int num_drop = 0;
-
-    pr_debug("kyamir: queue_drop netid=%d addr=%pI4\n", kyamir_netid, &addr);
-
-    while ( (pkt = dequeue_packet(ks, addr)) != NULL) {
-        // tell application that dest unreachable
-        if (pkt->skb) {
-            if (pkt->skb->sk)  {
-                // local socket
-                pkt->skb->sk->sk_err = EHOSTUNREACH;
-                pkt->skb->sk->sk_error_report(pkt->skb->sk);
-            }
-            else if (num_drop++ == 0) { 
-                // send ICMP message
-                if (pkt->net) pkt->skb->dev = pkt->net->loopback_dev;
-                skb_reset_network_header(pkt->skb);
-                skb_set_transport_header(pkt->skb, ip_hdrlen(pkt->skb));
-                skb_dst_drop(pkt->skb);
-                icmp_send(pkt->skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);
-            }
-            kfree_skb(pkt->skb);
-            pkt->skb = NULL;
-        }
-        kfree(pkt);
-    }
-}
-
-static void queue_send(struct kyamir_state *ks, struct net *net, uint32_t addr)
-{
-    struct queue_packet *pkt;
-
-    pr_debug("kyamir: queue_send netid=%d addr=%pI4\n", kyamir_netid, &addr);
-
-    while ( (pkt = dequeue_packet(ks, addr)) != NULL) {
-        if (pkt->skb && route_exists(net, addr)) {
-            int rc = kyamir_ip_route_me_harder(pkt->net, pkt->skb, RTN_LOCAL);
-            if (rc == 0) {
-                // Reinject packet
-                pr_debug("kyamir: reinject\n");
-                ip_local_out(pkt->net, pkt->skb->sk, pkt->skb);
-                pkt->skb = NULL;
-            }
-        }
-        if (pkt->skb) kfree_skb(pkt->skb);
-        kfree(pkt);
-    }
-}
-
-static int queue_exists(struct kyamir_state *ks, uint32_t addr)
-{
-    struct queue_packet *pkt, *found;
-    struct list_head *ptr;
-
-    pr_debug("kyamir: queue_exists netid=%d addr=%pI4\n", kyamir_netid, &addr);
-
-    read_lock_bh(&ks->queue_lock);
-
-    found = NULL;
-
-    list_for_each_prev(ptr, &ks->queue_list) {
-        pkt = list_entry(ptr, struct queue_packet, list);
-        if (pkt->addr == addr) {
-            found = pkt;
+    // check if first time for addr
+    list_for_each_entry(tmp, &ks->packets, list) {
+        if (tmp->ip4_addr == addr) {
+            pr_debug("kyamir: add_packet found netid=%d addr=%pI4\n", kyamir_netid, &addr);
+            rc = 1;
             break;
         }
     }
 
-    read_unlock_bh(&ks->queue_lock);
+    // add packet to list
+    list_add_tail(&yp->list, &ks->packets);
+    ks->packet_count++;
 
-    return found != NULL;
+    spin_unlock_bh(&ks->packet_lock);
+
+    return rc; 
+}
+
+static void drop_packets(struct kyamir_state *ks, uint32_t addr)
+{
+    pr_debug("kyamir: drop_packets netid=%d addr=%pI4\n", kyamir_netid, &addr);
+
+    struct yamir_packet *yp, *tmp;
+    LIST_HEAD(drop_list);
+    int num_drop = 0;
+
+    // gather packets
+    spin_lock_bh(&ks->packet_lock);
+    list_for_each_entry_safe(yp, tmp, &ks->packets, list) {
+        if (yp->ip4_addr == addr) {
+            list_move_tail(&yp->list, &drop_list);
+        }
+    }
+    spin_unlock_bh(&ks->packet_lock);
+
+    list_for_each_entry_safe(yp, tmp, &drop_list, list) {
+        if (yp->skb) {
+            // send unreachable message
+            if (yp->skb->sk)  {
+                // local socket
+                yp->skb->sk->sk_err = EHOSTUNREACH;
+                yp->skb->sk->sk_error_report(yp->skb->sk);
+            }
+            else if (num_drop++ == 0) { 
+                // remote peer
+                if (yp->net) yp->skb->dev = yp->net->loopback_dev;
+                skb_reset_network_header(yp->skb);
+                skb_set_transport_header(yp->skb, ip_hdrlen(yp->skb));
+                skb_dst_drop(yp->skb);
+                icmp_send(yp->skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0);
+            }
+            kfree_skb(yp->skb);
+        }
+        kfree(yp);
+    }
+}
+
+static void send_packets(struct kyamir_state *ks, struct net *net, __be32 addr)
+{
+    pr_debug("kyamir: send_packets netid=%d addr=%pI4\n", kyamir_netid, &addr);
+
+    struct yamir_packet *yp, *tmp;
+    LIST_HEAD(send_list);
+
+    // gather packets for addr
+    spin_lock_bh(&ks->packet_lock);
+    list_for_each_entry_safe(yp, tmp, &ks->packets, list) {
+        if (yp->ip4_addr == addr) {
+            list_move_tail(&yp->list, &send_list);
+        }
+    }
+    spin_unlock_bh(&ks->packet_lock);
+
+    // send packets
+    list_for_each_entry_safe(yp, tmp, &send_list, list) {
+        if (yp->skb) {
+            int rc = kyamir_ip_route_me_harder(yp->net, yp->skb, RTN_LOCAL);
+            if (rc == 0) {
+                // Reinject packet into stack
+                ip_local_out(yp->net, yp->skb->sk, yp->skb);
+                yp->skb = NULL;
+            }
+        }
+        if (yp->skb) kfree_skb(yp->skb);
+        kfree(yp);
+    }
 }
 
 // receive msg from userpace
 static int yamir_recv_msg(struct kyamir_state *ks, 
-    struct net *net, int type, struct yamir_msg *msg)
+    struct net *net, int pid, 
+    int cmd, struct yamir_msg *msg)
 {
+    pr_debug("kyamir: yamir_recv_msg pid=%d cmd=%d msg(addr=%pI4 ifindex=%d)\n", 
+        pid, cmd, &msg->ip4_addr, msg->ifindex);
+
     int rc = 0;
 
-    pr_debug("kyamir: yamir_recv_msg type=%d addr=%pI4 ifindex=%d\n", type, &msg->ip4_addr, msg->ifindex);
-
-    switch(type) {
+    switch(cmd) {
     case YAMIR_RT_REG:
+        atomic_set(&ks->peer_pid, pid);
+        pr_info("kyamir: netlink userspace pid=%d\n", pid);
         break;
     case YAMIR_RT_NONE:
+        if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
         // no route for addr
-        queue_drop(ks, msg->ip4_addr);
+        drop_packets(ks, msg->ip4_addr);
         break;
     case YAMIR_RT_ADD:
-        queue_send(ks, net, msg->ip4_addr);
+        if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
+        // no route for addr
+        add_route(ks, msg->ip4_addr);
+        send_packets(ks, net, msg->ip4_addr);
         break;
     case YAMIR_RT_DEL:  
-        queue_drop(ks, msg->ip4_addr);
+        if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
+        // no route for addr
+        del_route(ks, msg->ip4_addr);
+        drop_packets(ks, msg->ip4_addr);
         break;
     default:
-        rc = -EINVAL;
-    } 
-    
+       rc = -EINVAL;
+    }
+
     return rc;
 }
 
@@ -306,28 +394,16 @@ static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
     struct yamir_msg msg;
     int pid = info->snd_portid;
     int cmd = info->genlhdr->cmd;
-    int rc;
-    
-    pr_debug("kyamir: nl-recv lock netid=%d nsid=%u\n", kyamir_netid,  net->ns.inum);
+
+    pr_debug("kyamir: nl-recv lock netid=%d nsid=%u pid=%d cmd=%d\n", kyamir_netid, net->ns.inum, pid, cmd);
+
     mutex_lock(&ks->kyamirnl_mutex);
-
-    if (!ks->peer_pid) {
-        ks->peer_pid = pid;
-        pr_info("kyamir: netlink-bound pid=%d\n", pid);
-    }
-
-    if (ks->peer_pid != pid) {
-        rc = -EBUSY;
-    }
-    else if (!load_msg(&msg, info)) {
-        rc = -EINVAL;
-    }
-    else {
-        rc = yamir_recv_msg(ks, net, cmd, &msg);
+    int rc = -EINVAL;
+    if (load_msg(&msg, info)) {
+        rc = yamir_recv_msg(ks, net, pid, cmd, &msg);
     }
 
     mutex_unlock(&ks->kyamirnl_mutex);
-    pr_debug("kyamir: nl-recv unlock netid=%d\n", kyamir_netid);
 
     return rc;
 }
@@ -358,44 +434,38 @@ static bool build_msg(struct sk_buff *skb, int type, struct yamir_msg *msg)
 static int yamir_send_msg(struct kyamir_state *ks, struct net *net, int type, struct yamir_msg *msg)
 {
     pr_debug("kyamir: yamir_send_msg netid=%d pid=%d type=%d addr=%pI4 ifindex=%d\n", 
-        kyamir_netid, ks->peer_pid, type, &msg->ip4_addr, msg->ifindex);
+        kyamir_netid, atomic_read(&ks->peer_pid), type, &msg->ip4_addr, msg->ifindex);
 
-    int rc;
     struct sk_buff *skb = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_ATOMIC);
-    if (!skb) {
-        rc = -ENOMEM;
-    }
-    else if (!build_msg(skb, type, msg)) {
-        rc = -EMSGSIZE;
-    }
-    else if (ks->peer_pid) {
-        rc = genlmsg_unicast(net, skb, ks->peer_pid);
-    }
-    else {
+    if (!skb) return -ENOMEM;
+
+    if (!build_msg(skb, type, msg)) {
         kfree(skb);
-        rc = -ENOTCONN;
+        return -EMSGSIZE;
+    }
+
+    int pid = atomic_read(&ks->peer_pid);
+    if (!pid) {
+        kfree(skb);
+        return -ENOTCONN;
+    }
+
+    int rc = genlmsg_unicast(net, skb, pid);
+    if (rc != 0) {
+        kfree(skb);
     }
 
     return rc;
 }
 
-static void flush_all(struct kyamir_state *ks, struct net *net)
+static void flush_all(struct kyamir_state *ks)
 {
-    pr_debug("kyamir: flush ENTRY netid=%d nsid=%u numq=%u\n", 
-        kyamir_netid, net->ns.inum, ks->numq);
-
-    mutex_lock(&ks->kyamirnl_mutex);
-
-    ks->peer_pid = 0;
-    queue_flush(ks);
-
-    mutex_unlock(&ks->kyamirnl_mutex);
-
-    pr_debug("kyamir: flush EXIT_ netid=%d nsid=%u numq=%u\n", 
-        kyamir_netid, net->ns.inum, ks->numq);
+    pr_debug("kyamir: flush_all routes=%d packets=%d\n", ks->route_count, ks->packet_count);
+    flush_routes(ks);
+    flush_packets(ks);
 }
 
-static int kyamir_netlink_notify(struct notifier_block *block, 
+static int kyamir_netlink_notify(struct notifier_block *block,
     unsigned long event,
     void *ptr)
 {
@@ -406,15 +476,18 @@ static int kyamir_netlink_notify(struct notifier_block *block,
     if (!n || !n->net || n->protocol != NETLINK_GENERIC) return NOTIFY_DONE;
     struct net *net = n->net;
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
+    int pid = NOTIFY_ID(n);
 
-    if (!NOTIFY_ID(n) || NOTIFY_ID(n) != ks->peer_pid) return NOTIFY_DONE;
+    if (!pid || pid != atomic_read(&ks->peer_pid)) return NOTIFY_DONE;
 
     pr_debug("kyamir: nl-notify event=%lu netid=%d nsid=%u\n", event, kyamir_netid, net->ns.inum);
 
     switch(event) {
     case NETLINK_URELEASE:
-        // userspace exited -> flush state
-        flush_all(ks, net);
+        // userspace exited - flush state
+        pr_info("kyamir: netlink-flush netid=%d pid=%d\n", kyamir_netid, pid);
+        atomic_set(&ks->peer_pid, 0);
+        flush_all(ks);
         break;
     }
 
@@ -425,6 +498,7 @@ static struct notifier_block kyamir_netlink_notifier = {
     .notifier_call = kyamir_netlink_notify, 
 };
 
+
 // netfilter hook - IP packet coming into stack
 static unsigned int do_kyamir_nf(struct net *net,
     struct sk_buff *skb,
@@ -434,13 +508,12 @@ static unsigned int do_kyamir_nf(struct net *net,
     void *okfn)
 {
     int rc = NF_ACCEPT;
-    int entry_found;
     struct kyamir_state *ks;
     struct yamir_msg msg;
 
-    pr_debug("kyamir: nf-hook netid=%d nsid=%u hook=%d in=%d out=%d\n",
+    pr_debug("kyamir: nf-hook netid=%d nsid=%u hook=%d/%s in=%d out=%d\n",
         kyamir_netid, net->ns.inum, 
-        hook,
+        hook, hook_tostr(hook),
         in  ? in->ifindex  : -1,
         out ? out->ifindex : -1);
 
@@ -452,14 +525,22 @@ static unsigned int do_kyamir_nf(struct net *net,
     ks = net_generic(net, kyamir_netid);
     if (!ks) return rc;
 
+    pr_debug("kyamir: nf-hook netid=%d state: flags=0x%x pid=%d ifindex=%d\n",
+        kyamir_netid, ks->flags, atomic_read(&ks->peer_pid), ks->ifindex);
+
+    // accept if state not ready
     if ((ks->flags & KSF_IFNAME) == 0) return rc;
     if ((ks->flags & KSF_IPADDR) == 0) return rc;
-    if (!ks->peer_pid) return rc;
+    if (atomic_read(&ks->peer_pid) == 0) return rc;
 
-    // accept if not valid IPv4 packet, broadcast/multicast
+    // accept if not IPv4 packet
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
     struct iphdr *iph = ip_hdr(skb);
     if (iph->version != 4 || iph->ihl < 5) return rc;
+
+    pr_debug("kyamir: nf-hook netid=%d pkt: saddr=%pI4 daddr=%pI4\n",
+        kyamir_netid,  &iph->saddr, &iph->daddr);
+
     if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) return rc;
     if (!pskb_may_pull(skb, iph->ihl * 4)) return rc;
 
@@ -474,7 +555,7 @@ static unsigned int do_kyamir_nf(struct net *net,
         }
     }
 
-    pr_debug("kyamir: nf-pkt netid=%d saddr=%pI4 daddr=%pI4\n",
+    pr_debug("kyamir: nf-hook netid=%d fire: saddr=%pI4 daddr=%pI4\n",
         kyamir_netid, &iph->saddr, &iph->daddr);
 
     switch(hook) {
@@ -494,7 +575,7 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (iph->saddr == ks->ip4_addr || iph->daddr == ks->ip4_addr) break;
 
         // accept if incoming packet is routable 
-        if (route_exists(net, iph->daddr)) break;
+        if (find_route(ks, iph->daddr)) break;
 
         // drop packets which we cannot route
         msg.ip4_addr = iph->daddr;
@@ -511,16 +592,18 @@ static unsigned int do_kyamir_nf(struct net *net,
         if (iph->daddr == ks->bcast_addr) return rc;
 
         // accept if dst is routable 
-        if (route_exists(net, iph->daddr)) break;
+        if (find_route(ks, iph->daddr)) break;
 
         // assume first time if dst not already on queue
-        entry_found = queue_exists(ks, iph->daddr);
-        if (enqueue_packet(ks, net, skb, iph->daddr, okfn) != 0) {
-            // limits exceeded - accept or drop ?
+        rc = add_packet(ks, net, skb, iph->daddr);
+        if (rc < 0) {
+            // limit exceeded ?
+            rc = NF_ACCEPT;
             break;
         }
 
-        if (!entry_found) {
+        if (rc == 0) {
+            // first time
             msg.ip4_addr = iph->daddr;
             msg.ifindex = out->ifindex;
             yamir_send_msg(ks, net, YAMIR_RT_NEED, &msg);
@@ -746,7 +829,7 @@ static void __net_exit my_exit_net(struct net *net)
         kyamir_netfilter_deinit(ks, net);
     }
 
-    flush_all(ks, net);
+    flush_all(ks);
 
     pr_debug("kyamir: exit-net EXIT_ netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
 
@@ -759,16 +842,24 @@ static int __net_init my_init_net(struct net *net)
 
     pr_debug("kyamir: init-net ENTRY netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
 
+    // init routes
+    INIT_LIST_HEAD(&ks->routes);
+    spin_lock_init(&ks->route_lock);
+    ks->route_count = 0;
+
     // init packet queue
-    rwlock_init(&ks->queue_lock); 
-    INIT_LIST_HEAD(&ks->queue_list);
-    ks->numq = 0;
+    INIT_LIST_HEAD(&ks->packets);
+    spin_lock_init(&ks->packet_lock); 
+    ks->packet_count = 0;
+
+    // init netlink
+    atomic_set(&ks->peer_pid, 0);
+    mutex_init(&ks->kyamirnl_mutex);
 
     // init interface
     ks->ifindex = -1; 
     ks->ifname[0] = '\0';
     ks->flags = 0;
-    ks->peer_pid = 0;
 
     pr_debug("kyamir: init-net EXIT_ netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
 

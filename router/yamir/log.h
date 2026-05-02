@@ -8,7 +8,7 @@
  * Examples:
  *
  *  log_init(NULL, LOG_INFO);
- *  LOG_INFO("+", "server %s is up", server->name);
+ *  log_info("+", "server %s is up", server->name);
  *  log_debug("Running cmd %d", state->id);
  *
  * Overview

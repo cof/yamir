@@ -6,8 +6,8 @@
 # all        : build yamid, kyamir
 # yamird     : user-space router
 # kyamir     : kernel-space module
-# test       : run packetbb tests
-# test-yamir : build VM for test
+# test       : PacketBB tests
+# test-yamir : VM for testing router
 #
 YAMIR = yamird
 KYAMIR_DIR = kyamir
@@ -127,15 +127,15 @@ TEST_DEPS = $(TEST_OBJS:.o=.d)
 $(TEST_RUNNER) : $(TEST_OBJS)
 	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(TEST_OBJS) -o $@
 
-# build rule for test files
+# build rule for test-runner
 $(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
 TEST_FILES = tests/rfc5444_core.txt tests/dymo.txt
 
-# test
-# ----
+# PacketBB test
+# -------------
 .PHONY: test
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER) $(TEST_FILES)
@@ -148,8 +148,8 @@ VM_REBOOT = 1
 include scripts/build_vm.mk
 build-vm: vm-create
 
-# run router tests
-# ----------------
+# router test
+# -----------
 .PHONY: test-yamir
 test-yamir: $(YAMIR) build-vm
 	$(Q)echo "[+] Running $@"; \
