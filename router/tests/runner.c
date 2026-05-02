@@ -1,7 +1,20 @@
 /*
- * test runner
+ * PacketBB tester
+ *
+ * Usage:
+ * -----
+ *  test_runner FILE...
+ *
+ * Example:
+ * --------
+ * $ test_runner tests/dymo.txt
+ *
+ * Notes
+ * =====
+ * Use xxd to safely print a hexstr
+ * xxd -p -c 16 a.bin | sed 's/\(....\)/\1 /g' 
+ *
  */
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -356,14 +369,21 @@ static int enc_msgs(struct pkt_buf *dst, int nmsg, char *msgs[static nmsg])
     return 0;
 }
 
+static int cmp_buf(void *buf1, size_t len1, void *buf2, size_t len2)
+{
+    if (len1 != len2) return -1;
+    return memcmp(buf1, buf2, len1);
+}
+
 static int run_test(enum test_cmd cmd, 
     const char *hex, const char *pkt,
     int nstr, char *strs[static nstr])
 {
-    char tmp[2048];
+    char hexbuf[2048];
+    char msgbuf[2028];
 
-    int len = hexstr_tobin(hex, tmp, sizeof(tmp));
-    if (len < 0) return ERR_HEX;
+    int hex_len = hexstr_tobin(hex, hexbuf, sizeof(hexbuf));
+    if (hex_len < 0) return ERR_HEX;
 
     struct pkt_buf buf;
     struct pbb_hdr hdr;
@@ -372,13 +392,13 @@ static int run_test(enum test_cmd cmd,
 
     switch(cmd) {
     case TEST_MSG_START:
-        pkt_buf_init(&buf, tmp, len);
+        pkt_buf_init(&buf, hexbuf, hex_len);
         rc = pkt_buf_msg_dec(&buf, &msg);
         if (rc) rc = ERR_MSG;
         //log_debug("%.*s", pbb_msg_tostr(&msg, tmp, sizeof(tmp)), tmp);
         break;
     case TEST_PKT_END:
-        pkt_buf_init(&buf, tmp, len);
+        pkt_buf_init(&buf, hexbuf, hex_len);
         rc = pkt_buf_hdr_dec(&buf, &hdr);
         if (rc) return ERR_PKT;
         while (pkt_buf_rem(&buf)) {
@@ -387,14 +407,17 @@ static int run_test(enum test_cmd cmd,
         }
         break;
     case TEST_ENC_END:
-        pkt_buf_init(&buf, tmp, sizeof(tmp));
+        pkt_buf_init(&buf, msgbuf, sizeof(msgbuf));
         if (pkt) {
             rc = enc_pkt(&buf, pkt);
             if (rc) return ERR_ENC;
         }
         rc = enc_msgs(&buf, nstr, strs);
         if (rc) return ERR_ENC;
-        // TODO compare ehx
+        if (hex_len) {
+            rc = cmp_buf(msgbuf, pkt_buf_pos(&buf), hexbuf, hex_len);
+            if (rc) return ERR_ENC;
+        }
         break;
 
     default:
@@ -451,6 +474,8 @@ static int test_file(const char *file)
 
     FILE *f = fopen(file, "r");
     if (f == NULL) return -1;
+
+    fprintf(stderr,"test-case: %s\n", file);
 
     while (fgets(lbuf, sizeof(lbuf), f)) {
         lineno++;
@@ -588,7 +613,8 @@ static int test_file(const char *file)
         if (state != 4) continue;
 
         rc = run_test(cmd, pkt_buf_start(&hex), pkt, nmsg, msgs);
-        fprintf(stderr, "test %d werr=%d desc=%s\n", testno, rc, desc);
+        char *pass = rc == 0 ? "PASS" : "FAIL";
+        fprintf(stderr, "test %d [%s] %s\n", testno, pass, desc);
         if (rc) num_fail++;
 
         // next test 
@@ -606,7 +632,7 @@ static int test_file(const char *file)
 static void usage(char *prog)
 {
     const char *name = get_base(prog) ?: "<null>";
-    printf("Usage: %s [-l log_level] [file1, file2, ...]\n", name);
+    printf("Usage: %s [-l log_level] [-h] FILE...\n", name);
 }
 
 static int parse_argv(struct test_state *ts, int argc, char *argv[])
@@ -617,15 +643,14 @@ static int parse_argv(struct test_state *ts, int argc, char *argv[])
         switch(opt) {
         case 'l': log_level = atoi(optarg); break;
         case 'h': usage(argv[0]); exit(0); break;
-        default: return log_error_rf("Unknown option %c\n", opt);
+        default: return log_error_rf("Unknown option %c", opt);
         }
     }
 
-    // test-file list
-    if (optind < argc) {
-        ts->num_file = argc - optind;
-        ts->files = &argv[optind];
-    }
+    // file list
+    if (optind >= argc) return log_error_rf("Missing file list");
+    ts->num_file = argc - optind;
+    ts->files = &argv[optind];
 
     return 0;
 }
@@ -635,7 +660,7 @@ int main(int argc, char *argv[])
     struct test_state ts = { 0 };
 
     log_init(NULL, LOG_INFO);
-    parse_argv(&ts, argc, argv);
+    if (parse_argv(&ts, argc, argv)) exit(1);
 
     for (int i = 0; i < ts.num_file; i++) {
         int nfail = test_file(ts.files[i]);
