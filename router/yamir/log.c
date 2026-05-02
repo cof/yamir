@@ -29,7 +29,7 @@ void log_init(FILE *dst, int level)
     setvbuf(log_fd, NULL, _IOLBF, BUFSIZ);
 }
 
-void _log_msg(const char *file, int line, const char *func, 
+void _log_msg(const char *file, int line, const char *func,
     int ec, int what, const char *who, const char *fmt, ...)
 {
     if (!who) {

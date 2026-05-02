@@ -13,14 +13,14 @@
  *
  * Overview
  * --------
- * Basic idea is you use logger to report information to users, log what a 
+ * Basic idea is you use logger to report information to users, log what a
  * process is doing and report useful error messages if something fails.
- * 
+ *
  * There are 4 basic log types:
  *
  *  FATAL - "[FATAL] file:line (func): fmt-str
  *  ERROR - "[ERROR] file:line (func): fmt-str"
- *  INFO  - "[who] fmt-str" 
+ *  INFO  - "[who] fmt-str"
  *  DEBUG - "[DEBUG] file:line func: fmt-str
  *
  * Logger use printf fmt-str to allow complete control of whats logged.
@@ -29,7 +29,7 @@
  *  log_info("+", "The service is up");
  *  log_info("INFO", "did %s","something");
  *
- * Logger has macros that report the FILE, LINE and FUNC where an error has 
+ * Logger has macros that report the FILE, LINE and FUNC where an error has
  * occured allowing users to easily trace problems in the code base.
  *
  * Logger also has a range of macros that can be used to both log a message
@@ -76,7 +76,7 @@ extern int log_level;
  * log_argv(what, argc, argv) : log_info cmd-line - useful for debuing pod exec issues
  */
 void log_init(FILE *dst, int level);
-void _log_msg(const char *file, int line, const char *func, 
+void _log_msg(const char *file, int line, const char *func,
     int ec, int what, const char *what_str, const char *fmt, ...)
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);

@@ -12,8 +12,8 @@
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 
 #ifndef ARR_LEN
-#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0])) 
-#endif 
+#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0]))
+#endif
 
 #define MAX(a,b) (a) > (b) ? (a) : (b)
 #define UTIL_FAIL -1

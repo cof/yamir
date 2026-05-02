@@ -347,7 +347,7 @@ static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
         ab->head = ptr;
     }
 
-    // table 1 : ahasfulltail and ahaszerotail flags 
+    // table 1 : ahasfulltail and ahaszerotail flags
     switch(ab->flags & (PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL)) {
     case PBB_ABF_FULLTAIL:
         ptr = dec_next(buf, 1, PBB_ADRBLK_TAIL_LEN);
@@ -652,7 +652,7 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     if (flags & TLVF_TYPEEXT) {
         if (!push_val(buf, ext, 1)) return -1;
     }
-  
+
     // table 3
     switch(tlv->flags & (TLVF_SINGLEINDEX | TLVF_MULTIINDEX)) {
     case TLVF_SINGLEINDEX:
@@ -771,7 +771,7 @@ static int enc_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
         if (!push_val(buf, ab->head_len, 1)) return -1;
         if (ab->head_len && !push_mem(buf, addr, ab->head_len)) return -1;
     }
-   
+
     // table 1
     switch(ab->flags & (PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL)) {
     case PBB_ABF_FULLTAIL:
@@ -811,7 +811,7 @@ static bool compat_prefix(struct pbb_ab *ab, struct pbb_node *mn)
     if (!ab_has_prefix && !mn_has_prefix) return true;
     if (ab_has_prefix != mn_has_prefix) return false;
     if (ab->flags & PBB_ABF_SPRELEN) return mn->prefix == ab->prefix[0];
-   
+
     // blk is MULTI_PRELEN
     return true;
 }

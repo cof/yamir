@@ -1,4 +1,4 @@
-# encode DMYO request 
+# encode DMYO request
 ENC_START
     pkt: ver:0
     msg: type:RREQ hlimit:10 taddr:8.8.8.8 oaddr:172.0.0.1

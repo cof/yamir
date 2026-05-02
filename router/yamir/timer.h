@@ -1,7 +1,7 @@
 /*
  * timer
  * -----
- * A simple timer API 
+ * A simple timer API
  *
  * - No dynamic memory allocation (malloc-free) for deterministic performance.
  * - Structure-composable: built for inline embedding, object compostion & memory locality

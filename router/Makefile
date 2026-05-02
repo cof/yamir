@@ -1,6 +1,6 @@
 #
 # Yet Another Manet IP Router (YAMIR)
-# 
+#
 # Targets
 # ------
 # all        : build yamid, kyamir
@@ -186,7 +186,7 @@ tags: $(SOURCES)
 # clean
 # -----
 .PHONY: clean
-clean: 
+clean:
 	rm -fr $(BUILD_DIR) tags $(YAMIR) $(TEST_RUNNER)
 	$(MAKE) -C $(KYAMIR_DIR) KERNELDIR=$(KDIR) KCC=$(CC) clean
 

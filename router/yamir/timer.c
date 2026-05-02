@@ -20,7 +20,7 @@
     __typeof__(x) _tmp = (x); \
     (x) = (y); \
     (y) = _tmp; \
-} while(0) 
+} while(0)
 
 static bool timer_greater(struct timer_mgr *tm, int t1, int t2)
 {
@@ -30,7 +30,7 @@ static bool timer_greater(struct timer_mgr *tm, int t1, int t2)
     return ts1->expiry > ts2->expiry;
 }
 
-//  sift up or swim  
+//  sift up or swim
 static void minheap_siftup(struct timer_mgr *tm, int idx)
 {
     //log_debug("nheap=%d idx=%d", tm->num_timer, idx);

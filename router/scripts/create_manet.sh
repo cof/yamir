@@ -6,7 +6,7 @@ RUN_DIR=/home/alpine
 KYAMIR=$RUN_DIR/kyamir/kyamir.ko
 YAMIRD=$RUN_DIR/yamird
 
-# config 
+# config
 IFNAME=wlan0
 BRIDGE=mac-wlan0
 NS1=yamir1
@@ -17,7 +17,7 @@ ADDR_MASK=24
 LOG_LEVEL=3
 TMP_NAME=mv1
 
-start() 
+start()
 {
     set -x
     # need interface for MACVLAN master
@@ -48,13 +48,13 @@ start()
     ip netns exec $NS2 $YAMIRD -d -i $IFNAME -f /var/log/$NS2.log -l $LOG_LEVEL
 }
 
-stop() 
+stop()
 {
     set -x
 
     # stop router
     pkill -f $YAMIRD
-    rmmod $KYAMIR 
+    rmmod $KYAMIR
 
     # delete network
     ip netns del $NS2

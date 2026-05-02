@@ -8,8 +8,8 @@
  *  - route discovery via DYMO protocol
  *  - PacketBB codec to read/write messages
  *
- * Usage: 
- * 
+ * Usage:
+ *
  *  ./yamird -i wlan0
  *
  * Notes:
@@ -19,7 +19,7 @@
  *  cap_net_bind_service - uses privileled port 269
  *  cap_net_raw          - uses SO_BINDTODEVICE
  *  cap_net_admin        - uses netlink multlicast nl_groups != 0
- *  
+ *
  * sudo setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep yamird
  *
  * Refs
@@ -115,7 +115,7 @@ struct yamir_state {
 
     // timers
     struct timer_mgr timers;
-   
+
     // recv buffers
     struct sockaddr_storage addr_pool[YAMIR_MAXPKT];
     struct mmsghdr msgs[YAMIR_MAXPKT];
@@ -669,7 +669,7 @@ static int route_update(struct yamir_state *ys,
     rtnl_send_route(ys, RTM_NEWROUTE, dr);
 
     log_info("+", "Added route %s", route_tostr(dr));
-   
+
     return 1;
 }
 
@@ -900,7 +900,7 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
     // check required fields present
     int rc = validate_msg(ys, rreq);
     if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
-   
+
     int orig_superior = route_update(ys, rreq->type, rreq->origin, rs->saddr, rs->ifindex);
 
     // additional nodes
@@ -1075,7 +1075,7 @@ static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
 
     struct pbb_msg msg;
     pbb_msg_reset(&msg);
-   
+
     // TODO set hoplimit using ring search RFC3561
     msg.type = DYMO_RREQ;
     msg.hop_limit = MSG_HOPLIMIT;
@@ -1247,7 +1247,7 @@ static int dymo_process_mmsg(struct yamir_state *ys,
         log_debug("saddr %s is local - will drop", addr_tostr(rs->saddr));
         return 0;
     }
-   
+
     // decode pkt data - until zero or error
     struct pkt_buf buf = PKT_BUF_INIT(pkt, len);
     struct pbb_hdr hdr;
@@ -1553,13 +1553,13 @@ static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
     nlm->nlmsg_type  = type;
     nlm->nlmsg_flags = NLM_F_REQUEST;
     nlm->nlmsg_pid   = getpid();
-   
+
     if (type == RTM_NEWROUTE) {
         nlm->nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
     }
     uint32_t dst_prefix = dr->prefix;
     if (dst_prefix == 0) dst_prefix = 32;
-  
+
     // setup rtnetlink msg
     struct rtmsg *rtm = &req.rtm;
     memset(rtm, 0, sizeof(*rtm));
@@ -1586,23 +1586,23 @@ static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
 static int resolv_netlink(int fd, const char *name)
 {
     struct genl_request req = {0};
-   
+
     // netlink header
     req.n.nlmsg_type = GENL_ID_CTRL;
     req.n.nlmsg_flags = NLM_F_REQUEST;
     req.n.nlmsg_seq = 1;
     req.n.nlmsg_pid = getpid();
-   
+
     // request GETFAMILY
     req.g.cmd = CTRL_CMD_GETFAMILY;
     req.g.version = 1;
-   
+
     // need CTRL_ATTR_FAMILY_NAME
     struct nlattr *nla = (struct nlattr *)((char *)&req + NLMSG_SPACE(GENL_HDRLEN));
     nla->nla_type = CTRL_ATTR_FAMILY_NAME;
     nla->nla_len = strlen(name) + 1 + NLA_HDRLEN;
     strcpy((char *)nla + NLA_HDRLEN, name);
-   
+
     req.n.nlmsg_len = NLMSG_SPACE(GENL_HDRLEN) + NLMSG_ALIGN(nla->nla_len);
 
     ssize_t rc = send(fd, &req, req.n.nlmsg_len, 0);

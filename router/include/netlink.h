@@ -24,7 +24,7 @@ struct genl_request {
     struct nlmsghdr n;
     struct genlmsghdr g;
     // Space for: (attr_hdr + u32) + (attr_hdr + int)
-    char buf[64] __attribute__((aligned(4))); 
+    char buf[64] __attribute__((aligned(4)));
 };
 
 enum {

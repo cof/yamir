@@ -1,7 +1,7 @@
 #
 # Verbosity - Inspired by Kbuild/HAProxy
 # --------------------------------------
-# 
+#
 
 V ?= 0
 Q = @

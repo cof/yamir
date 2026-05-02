@@ -54,7 +54,7 @@ static char *rtrim(char *str)
     while (len && is_white(str[len - 1])) {
         len--;
     }
-   
+
     str[len] = '\0';
     return str;
 }

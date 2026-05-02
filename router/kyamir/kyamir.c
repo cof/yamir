@@ -103,7 +103,7 @@ static bool route_exists(struct net *net, __be32 ip4_addr)
 {
     struct rtable *rt;
     struct flowi4 fl4 = { .daddr = ip4_addr };
-   
+
     rt = ip_route_output_key(net, &fl4);
     if (IS_ERR(rt)) return false;
     ip_rt_put(rt);
@@ -127,7 +127,7 @@ static const char *hook_tostr(int hook)
 static void flush_routes(struct kyamir_state *ks)
 {
     struct yamir_route *yr, *tmp;
-   
+
     spin_lock(&ks->route_lock);
 
     list_for_each_entry_safe(yr, tmp, &ks->routes, list) {
@@ -352,7 +352,7 @@ static int yamir_recv_msg(struct kyamir_state *ks,
         add_route(ks, msg->ip4_addr);
         send_packets(ks, net, msg->ip4_addr);
         break;
-    case YAMIR_RT_DEL: 
+    case YAMIR_RT_DEL:
         if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
         // no route for addr
         del_route(ks, msg->ip4_addr);

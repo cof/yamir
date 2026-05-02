@@ -13,7 +13,7 @@ struct list_elem {
 
 #define list_first_entry(ptr, type, field) list_entry((ptr)->next, type, field)
 #define list_next_entry(ptr, field) list_entry((ptr)->field.next, __typeof__(*ptr), field)
-#define list_prev_entry(ptr, field) list_entry((ptr)->field.prev, __typeof__(*ptr), field) 
+#define list_prev_entry(ptr, field) list_entry((ptr)->field.prev, __typeof__(*ptr), field)
 
 #define list_first(head, entry, field) \
     list_isempty(head) ? NULL : list_first_entry(head, entry, field)
