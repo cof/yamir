@@ -12,7 +12,7 @@
  * Notes
  * =====
  * Use xxd to safely print a hexstr
- * xxd -p -c 16 a.bin | sed 's/\(....\)/\1 /g' 
+ * xxd -p -c 16 a.bin | sed 's/\(....\)/\1 /g'
  *
  */
 #include <stdio.h>
@@ -24,8 +24,8 @@
 #include "pbb.h"
 
 #ifndef ARR_LEN
-#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0])) 
-#endif 
+#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0]))
+#endif
 
 struct test_state {
     int total_fail;
@@ -46,7 +46,7 @@ static inline bool is_white(int ch)
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\n';
 }
 
-static char *rtrim(char *str) 
+static char *rtrim(char *str)
 {
     if (!str) return str;
     size_t len = strlen(str);
@@ -54,7 +54,7 @@ static char *rtrim(char *str)
     while (len && is_white(str[len - 1])) {
         len--;
     }
-    
+   
     str[len] = '\0';
     return str;
 }
@@ -102,7 +102,7 @@ static int hexstr_tobin(const char *hex, void *buf, size_t len)
         if (!nibble) {
             byte = val << 4;
             nibble = true;
-        } 
+        }
         else {
             *ptr++ = byte | val;
             nibble = false;
@@ -208,13 +208,13 @@ static int enc_pkt(struct pkt_buf *dst, const char *str)
 
         switch(str_tofield(fn)) {
         case ENC_VER:
-            hdr.version = atoi(fv); 
+            hdr.version = atoi(fv);
             break;
         case ENC_FLAGS:
             hdr.flags = atoi(fv);
             break;
-        case ENC_SEQNUM: 
-            hdr.seq_num = atoi(fv); 
+        case ENC_SEQNUM:
+            hdr.seq_num = atoi(fv);
             hdr.flags |= PBB_HF_SEQN;
             break;
         default:
@@ -375,7 +375,7 @@ static int cmp_buf(void *buf1, size_t len1, void *buf2, size_t len2)
     return memcmp(buf1, buf2, len1);
 }
 
-static int run_test(enum test_cmd cmd, 
+static int run_test(enum test_cmd cmd,
     const char *hex, const char *pkt,
     int nstr, char *strs[static nstr])
 {
@@ -559,7 +559,7 @@ static int test_file(const char *file)
                 cmd = cmd1;
                 state = 4;
                 break;
-            } 
+            }
             // remove trailing comment
             args = strchr(line, '#');
             if (args) *args = '\0';
@@ -617,7 +617,7 @@ static int test_file(const char *file)
         fprintf(stderr, "test %d [%s] %s\n", testno, pass, desc);
         if (rc) num_fail++;
 
-        // next test 
+        // next test
         state = 0;
     }
     fclose(f);
