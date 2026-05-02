@@ -132,7 +132,7 @@ $(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
-TEST_FILES = tests/rfc5444_core.txt tests/dymo.txt
+TEST_FILES = tests/rfc5444.txt tests/dymo.txt
 
 # PacketBB test
 # -------------
@@ -140,8 +140,8 @@ TEST_FILES = tests/rfc5444_core.txt tests/dymo.txt
 test: $(TEST_RUNNER)
 	./$(TEST_RUNNER) $(TEST_FILES)
 
-# VM for testing yamir
-# --------------------
+# VM for router tests
+# -------------------
 VM_NAME = test-yamir
 VM_RESIZE = 1G
 VM_REBOOT = 1
