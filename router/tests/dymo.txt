@@ -7,6 +7,6 @@ ENC_END
 # encode DMYO response
 ENC_START
     pkt: ver:0
-    msg: type:RREP hlimit:10 taddr:172.0.0.10,seqnum=0,flags=0x1 oaddr:172.0.0.20,seqnum=1
-    hex: 000b 4300 150a 0000 0100 ac00 0014 0006 e0d0 0000 0101
+    msg: type:RREP hlimit:10 taddr:172.0.0.10,seqnum=0 oaddr:172.0.0.20,seqnum=1
+    hex: 000b 4300 1f0a 0000 0200 ac00 000a ac00 0014 000c e0d0 0000 0100 e0d0 0001 0101
 ENC_END
