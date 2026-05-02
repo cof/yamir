@@ -36,11 +36,11 @@
  */
 static inline struct net *kyamir_get_net(void) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
-    // network namespaces were introduced in 2.6.24 
-    return &init_net; 
+    // network namespaces were introduced in 2.6.24
+    return &init_net;
 #else
     // older kernels namespaces didn't exist
-    return NULL; 
+    return NULL;
 #endif
 }
 
@@ -80,11 +80,11 @@ static inline void kyamir_unregister_nf_hook(struct net *net, struct nf_hook_ops
 static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct sk_buff *skb))
 {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0))
-    return netlink_kernel_create(&init_net, 
+    return netlink_kernel_create(&init_net,
         NELINK_USERSOCK,
         NETLINK_YAMIR_GROUP,
-        recv_cb, 
-        NULL, 
+        recv_cb,
+        NULL,
         THIS_MODULE
     );
 #elif (LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0))
@@ -104,7 +104,7 @@ static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct s
 }
 
 // assign new route to packet
-static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb, unsigned addr_type) 
+static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb, unsigned addr_type)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
     /* Modern kernels (4 args) */
@@ -132,7 +132,7 @@ static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb
 #endif
 
 
-static inline void kyamir_netlink_ack(struct sk_buff *skb, struct nlmsghdr *nlh, int err) 
+static inline void kyamir_netlink_ack(struct sk_buff *skb, struct nlmsghdr *nlh, int err)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0)
     netlink_ack(skb, nlh, err, NULL);

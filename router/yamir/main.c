@@ -1,5 +1,5 @@
 /*
- * YAMIR - Yet Another MANET IP Router 
+ * YAMIR - Yet Another MANET IP Router
  *
  * This a userspace IP router with
  *
@@ -8,8 +8,8 @@
  *  - route discovery via DYMO protocol
  *  - PacketBB codec to read/write messages
  *
- * Usage:  
- *  
+ * Usage: 
+ * 
  *  ./yamird -i wlan0
  *
  * Notes:
@@ -19,7 +19,7 @@
  *  cap_net_bind_service - uses privileled port 269
  *  cap_net_raw          - uses SO_BINDTODEVICE
  *  cap_net_admin        - uses netlink multlicast nl_groups != 0
- *   
+ *  
  * sudo setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep yamird
  *
  * Refs
@@ -115,7 +115,7 @@ struct yamir_state {
 
     // timers
     struct timer_mgr timers;
-    
+   
     // recv buffers
     struct sockaddr_storage addr_pool[YAMIR_MAXPKT];
     struct mmsghdr msgs[YAMIR_MAXPKT];
@@ -174,9 +174,9 @@ struct dymo_rt {
 
 // all ROUTE timeouts scaled from secs to ms
 #define DR_TIMEOUT         (5 * 1000)
-#define DR_AGE_MIN         (1 * 1000) 
-#define DR_SEQNUM_AGE_MAX  (60 * 1000) 
-#define DR_USED_TIMEOUT    DR_TIMEOUT 
+#define DR_AGE_MIN         (1 * 1000)
+#define DR_SEQNUM_AGE_MAX  (60 * 1000)
+#define DR_USED_TIMEOUT    DR_TIMEOUT
 #define DR_DELETE_TIMEOUT  (2 * DR_TIMEOUT)
 #define DR_RREQ_WAIT_TIME  (2 * 1000)
 #define UNICAST_MESSAGE_SENT_TIMEOUT (1 * 1000)
@@ -238,7 +238,7 @@ static const char *rtnl_type_tostr(uint32_t type)
 
 static const char *sockaddr_tostr(struct sockaddr_in *sa)
 {
-    static char bufs[4][ADDR_STRLEN]; 
+    static char bufs[4][ADDR_STRLEN];
     static int idx;
 
     char *buf = bufs[idx];
@@ -257,7 +257,7 @@ static const char *sockaddr_tostr(struct sockaddr_in *sa)
     return buf;
 }
 
-static inline const char *addr_tostr(uint32_t addr) 
+static inline const char *addr_tostr(uint32_t addr)
 {
     return pbb_addr_tostr(4, (void *) &addr);
 }
@@ -273,17 +273,17 @@ static const char *route_tostr(struct dymo_rt *dr)
 
     if (!dr) return "<none>";
 
-    snprintf(buf, size, 
+    snprintf(buf, size,
         "addr=%s/%d gwaddr=%s gwifindex=%d seqnum=%d dist=%d flags=0x%x",
-        addr_tostr(dr->addr), dr->prefix, 
-        addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex, 
-        dr->seqnum, dr->dist, 
+        addr_tostr(dr->addr), dr->prefix,
+        addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex,
+        dr->seqnum, dr->dist,
         dr->flags);
 
     return buf;
 }
 
-static const char *dymo_msg_tostr(struct pbb_msg *msg) 
+static const char *dymo_msg_tostr(struct pbb_msg *msg)
 {
     static char bufs[4][256];
     static int idx;
@@ -299,8 +299,8 @@ static const char *dymo_msg_tostr(struct pbb_msg *msg)
     pkt_buf_printf(&buf,
         "type=%s flags=0x%x hlim=%d did=%u nodes=%d tlvs=%d taddr=[%s] oaddr=[%s]",
         pbb_type_tostr(msg->type), msg->flags, msg->hop_limit, msg->did,
-        msg->num_node, msg->num_tlv, 
-        pbb_node_tostr(msg->target, msg->addr_len), 
+        msg->num_node, msg->num_tlv,
+        pbb_node_tostr(msg->target, msg->addr_len),
         pbb_node_tostr(msg->origin, msg->addr_len));
 
     return str;
@@ -394,7 +394,7 @@ static int netlink_send(int fd, void *data, size_t len)
         .msg_iovlen = 1,
     };
 
-    ssize_t nsent = sendmsg(fd, &mh, 0); 
+    ssize_t nsent = sendmsg(fd, &mh, 0);
     if (nsent == -1) return log_errno_rf("rnetlink_send");
 
     return 0;
@@ -621,8 +621,8 @@ static int route_update(struct yamir_state *ys,
     int msg_type, struct pbb_node *mn,
     uint32_t nexthop_addr, uint32_t nexthop_ifindex)
 {
-    log_debug("type=%d mnaddr=%s gwaddr=%s gwifindex=%d", 
-        msg_type, addr_tostr(mn->ip4_addr), 
+    log_debug("type=%d mnaddr=%s gwaddr=%s gwifindex=%d",
+        msg_type, addr_tostr(mn->ip4_addr),
         addr_tostr(nexthop_addr), nexthop_ifindex);
 
     struct dymo_rt *dr = route_find(ys, mn->ip4_addr);
@@ -632,7 +632,7 @@ static int route_update(struct yamir_state *ys,
     if (dr) {
         route_stop_timers(dr);
         // should we really be doing a route update ?
-        // deleting the existing route creates a window where 
+        // deleting the existing route creates a window where
         // kernel has no route for valid packets
         rtnl_send_route_del(dr, 0);
     }
@@ -669,7 +669,7 @@ static int route_update(struct yamir_state *ys,
     rtnl_send_route(ys, RTM_NEWROUTE, dr);
 
     log_info("+", "Added route %s", route_tostr(dr));
-    
+   
     return 1;
 }
 
@@ -871,7 +871,7 @@ static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
     if (msg->did != ys->node_did) return PBB_MSG_TLV_DID;
     if (yamir_islocaladdr(ys, msg->origin)) return PBB_MSG_OLADDR;
 
-    return 0; 
+    return 0;
 }
 
 // fixup target,origin nodes
@@ -900,10 +900,10 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
     // check required fields present
     int rc = validate_msg(ys, rreq);
     if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
-    
+   
     int orig_superior = route_update(ys, rreq->type, rreq->origin, rs->saddr, rs->ifindex);
 
-    // additional nodes 
+    // additional nodes
     for (int i = skip; i < rreq->num_node; i++) {
         struct pbb_node *mn = &rreq->nodes[i];
         if (!route_update(ys, rreq->type, mn, rs->saddr, rs->ifindex)) {
@@ -934,7 +934,7 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv
 
     int orig_superior = route_update(ys, rrep->type, rrep->origin, rs->saddr, rs->ifindex);
 
-    // additional nodes 
+    // additional nodes
     for (int i = skip; i < rrep->num_node; i++) {
         struct pbb_node *mn = &rrep->nodes[i];
         if (!route_update(ys, rrep->type, mn, rs->saddr, rs->ifindex)) {
@@ -964,7 +964,7 @@ static int route_broken(struct yamir_state *ys, struct pbb_node *mn, uint32_t se
 
     if (!dr_isbroken(dr) &&
         (dr->nexthop_addr == sender &&
-        (dr->seqnum == 0 || mn->seqnum == 0 
+        (dr->seqnum == 0 || mn->seqnum == 0
          || !pbb_node_seqn(mn)
          || ((int16_t) dr->seqnum - (int16_t) mn->seqnum  <= 0))))
     {
@@ -1065,7 +1065,7 @@ static struct dymo_req *find_req(struct yamir_state *ys, uint32_t addr)
         if (req->addr == addr) return req;
     }
 
-    return NULL; 
+    return NULL;
 }
 
 static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
@@ -1075,7 +1075,7 @@ static void dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
 
     struct pbb_msg msg;
     pbb_msg_reset(&msg);
-    
+   
     // TODO set hoplimit using ring search RFC3561
     msg.type = DYMO_RREQ;
     msg.hop_limit = MSG_HOPLIMIT;
@@ -1126,9 +1126,9 @@ static void dymo_req_out(struct dymo_req *req)
         req->hop_count = 0;
     }
 
-    log_debug("%s attempt %d/%d wait %ld", 
+    log_debug("%s attempt %d/%d wait %ld",
         addr_tostr(req->addr),
-        req->tries, 
+        req->tries,
         DISCOVERY_ATTEMPTS_MAX,
         req->wait_time);
 
@@ -1137,7 +1137,7 @@ static void dymo_req_out(struct dymo_req *req)
     dymo_req_send(ys, req);
 }
 
-static void dymo_req_timeout(void *arg) 
+static void dymo_req_timeout(void *arg)
 {
     struct dymo_req *req = arg;
 
@@ -1247,7 +1247,7 @@ static int dymo_process_mmsg(struct yamir_state *ys,
         log_debug("saddr %s is local - will drop", addr_tostr(rs->saddr));
         return 0;
     }
-    
+   
     // decode pkt data - until zero or error
     struct pkt_buf buf = PKT_BUF_INIT(pkt, len);
     struct pbb_hdr hdr;
@@ -1340,7 +1340,7 @@ static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *m
     memcpy(mkptr(nla, NLA_HDRLEN), &msg->ip4_addr, sizeof(uint32_t));
     nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
 
-    nla = mkptr(&req, nlh->nlmsg_len); 
+    nla = mkptr(&req, nlh->nlmsg_len);
     nla->nla_type = YAMIR_ATTR_IFINDEX;
     nla->nla_len = sizeof(int32_t) + NLA_HDRLEN;
     memcpy(mkptr(nla, NLA_HDRLEN), &msg->ifindex, sizeof(int32_t));
@@ -1352,7 +1352,7 @@ static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *m
 // process yamir_msg from kyamir
 static void kyamir_process_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
 {
-    log_debug("type=%s addr=%s ifindex=%d", 
+    log_debug("type=%s addr=%s ifindex=%d",
         yamir_type_tostr(type), addr_tostr(msg->ip4_addr), msg->ifindex);
 
     switch(type) {
@@ -1375,13 +1375,13 @@ static bool parse_genl_attrs(struct yamir_msg *msg, struct nlmsghdr *nlh)
         if (nla->nla_len > attr_len) return false;
 
         switch (nla->nla_type) {
-        case YAMIR_ATTR_IP4ADDR: 
+        case YAMIR_ATTR_IP4ADDR:
             memcpy(&msg->ip4_addr, mkptr(nla, NLA_HDRLEN), sizeof(msg->ip4_addr));
             break;
-        case YAMIR_ATTR_IFINDEX: 
+        case YAMIR_ATTR_IFINDEX:
             memcpy(&msg->ifindex, mkptr(nla, NLA_HDRLEN), sizeof(msg->ifindex));
             break;
-        default: 
+        default:
             // Ignore unknown attributes
             break;
         }
@@ -1430,7 +1430,7 @@ static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
-    log_debug("msg_len=%zu, nlh_type=%u, nlh_len=%u", 
+    log_debug("msg_len=%zu, nlh_type=%u, nlh_len=%u",
           msg_len, nlh->nlmsg_type, nlh->nlmsg_len);
 
     for (; NLMSG_OK(nlh, msg_len); nlh = NLMSG_NEXT(nlh, msg_len)) {
@@ -1524,19 +1524,19 @@ static int nlh_rta_add(struct nlmsghdr *nlh, size_t maxlen,
     return 0;
 }
 
-/* 
+/*
  * we support add/delete ipv4 routes only
  * ./linux/rtnetlink.h
  * route add dest/prefix dev if metric hop_count via nexthop_addr"
- * TODO 
+ * TODO
  * probably should request successful route updates from kernel via
- * a NLM_F_ACK flag but this means async routing updates with 
+ * a NLM_F_ACK flag but this means async routing updates with
  * callback to original route change request
 */
 static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
 {
     log_debug("type=%s addr=%s/%d nexthop=%s ifindex=%d dist=%u",
-        rtnl_type_tostr(type), addr_tostr(dr->addr), dr->prefix, 
+        rtnl_type_tostr(type), addr_tostr(dr->addr), dr->prefix,
         addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex, dr->dist);
 
     // TODO dynamically allocate a buffer of the correct size
@@ -1549,18 +1549,18 @@ static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
     // setup netlink msg header
     struct nlmsghdr *nlm = &req.nlm;
     memset(nlm, 0, sizeof(*nlm));
-    nlm->nlmsg_len   = NLMSG_LENGTH(sizeof(struct rtmsg)); 
+    nlm->nlmsg_len   = NLMSG_LENGTH(sizeof(struct rtmsg));
     nlm->nlmsg_type  = type;
     nlm->nlmsg_flags = NLM_F_REQUEST;
     nlm->nlmsg_pid   = getpid();
-    
+   
     if (type == RTM_NEWROUTE) {
         nlm->nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
     }
     uint32_t dst_prefix = dr->prefix;
     if (dst_prefix == 0) dst_prefix = 32;
-   
-    // setup rtnetlink msg 
+  
+    // setup rtnetlink msg
     struct rtmsg *rtm = &req.rtm;
     memset(rtm, 0, sizeof(*rtm));
     rtm->rtm_family   = AF_INET;
@@ -1586,23 +1586,23 @@ static int rtnl_send_route(struct yamir_state *ys, int type, struct dymo_rt *dr)
 static int resolv_netlink(int fd, const char *name)
 {
     struct genl_request req = {0};
-    
+   
     // netlink header
     req.n.nlmsg_type = GENL_ID_CTRL;
     req.n.nlmsg_flags = NLM_F_REQUEST;
     req.n.nlmsg_seq = 1;
     req.n.nlmsg_pid = getpid();
-    
+   
     // request GETFAMILY
     req.g.cmd = CTRL_CMD_GETFAMILY;
     req.g.version = 1;
-    
+   
     // need CTRL_ATTR_FAMILY_NAME
     struct nlattr *nla = (struct nlattr *)((char *)&req + NLMSG_SPACE(GENL_HDRLEN));
     nla->nla_type = CTRL_ATTR_FAMILY_NAME;
     nla->nla_len = strlen(name) + 1 + NLA_HDRLEN;
     strcpy((char *)nla + NLA_HDRLEN, name);
-    
+   
     req.n.nlmsg_len = NLMSG_SPACE(GENL_HDRLEN) + NLMSG_ALIGN(nla->nla_len);
 
     ssize_t rc = send(fd, &req, req.n.nlmsg_len, 0);
@@ -1654,14 +1654,14 @@ static int dymo_init(struct yamir_state *ys)
 {
     log_debug("ifname=%s port=%d", ys->if_name, ys->port);
 
-    // create the socket 
+    // create the socket
     int sock_type = SOCK_DGRAM | SOCK_NONBLOCK;
     ys->dymo_fd = socket(AF_INET, sock_type, 0);
     if (ys->dymo_fd == -1) return log_errno_rf("dymo_init: socket");
 
     // get interface index
     struct ifreq ifreq;
-    strcpy(ifreq.ifr_name, ys->if_name); 
+    strcpy(ifreq.ifr_name, ys->if_name);
     int ec = ioctl(ys->dymo_fd, SIOCGIFINDEX, &ifreq);
     if (ec == -1) return log_errno_rf("dymo_init: i/f not found");
     ys->if_index = ifreq.ifr_ifindex;
@@ -1698,7 +1698,7 @@ static int dymo_init(struct yamir_state *ys)
     if (ec == -1) return log_errno_rf("set bindtodevice");
 
     // add link-local multicast (bsd/linux grr)
-    struct ip_mreq mreq; 
+    struct ip_mreq mreq;
     mreq.imr_multiaddr.s_addr = inet_addr(LL_MANET_ROUTERS);
     mreq.imr_interface.s_addr = ys->local_addr;
     ec = setsockopt(ys->dymo_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
@@ -1864,7 +1864,7 @@ int main(int argc, char *argv[])
 
     while (keep_running) {
         wait_ms = timer_check(&ys->timers);
-        int rc = poll(fds, ARR_LEN(fds), wait_ms); 
+        int rc = poll(fds, ARR_LEN(fds), wait_ms);
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;
             break;

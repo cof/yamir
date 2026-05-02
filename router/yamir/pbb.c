@@ -18,8 +18,8 @@
 #include "pbb.h"
 
 #ifndef ARR_LEN
-#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0])) 
-#endif 
+#define ARR_LEN(a) (sizeof (a) / sizeof ((a)[0]))
+#endif
 
 
 // TODO use x-macro
@@ -128,7 +128,7 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
     int idx_start, idx_stop;
     switch(tlv->flags & (TLVF_SINGLEINDEX & TLVF_MULTIINDEX)) {
     case 0:
-        idx_start = 0; 
+        idx_start = 0;
         idx_stop  = idx_end;
         break;
     case TLVF_SINGLEINDEX:
@@ -204,7 +204,7 @@ static int dec_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
 
     // table 3
     switch(tlv->flags & (TLVF_SINGLEINDEX | TLVF_MULTIINDEX)) {
-    case TLVF_SINGLEINDEX: 
+    case TLVF_SINGLEINDEX:
         ptr = dec_next(buf, 1, PBB_TLV_INDEXSTART);
         if (!ptr) return -1;
         tlv->idx_start = dec_u32(ptr, 1);
@@ -347,7 +347,7 @@ static int dec_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
         ab->head = ptr;
     }
 
-    // table 1 : ahasfulltail and ahaszerotail flags  
+    // table 1 : ahasfulltail and ahaszerotail flags 
     switch(ab->flags & (PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL)) {
     case PBB_ABF_FULLTAIL:
         ptr = dec_next(buf, 1, PBB_ADRBLK_TAIL_LEN);
@@ -395,7 +395,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
     uint8_t mid[512];
     uint8_t prefix[32];
 
-    struct pbb_ab ab = { 
+    struct pbb_ab ab = {
         .head = head,
         .tail = tail,
         .mid  = mid,
@@ -478,7 +478,7 @@ static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
         msg->seq_num = dec_u32(ptr, 2);
     }
 
-    log_debug("msg-flds [orig=%s hlim=%d hcnt=%d seqn=%d]", 
+    log_debug("msg-flds [orig=%s hlim=%d hcnt=%d seqn=%d]",
         pbb_msg_orig(msg) ? pbb_addr_tostr(msg->addr_len, msg->orig_addr) : "",
         msg->hop_limit, msg->hop_limit, msg->seq_num);
 
@@ -500,7 +500,7 @@ static int dec_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
     msg->addr_len = (ptr[1] & 0xf) + 1;
     msg->size = dec_u32(ptr + 2, 2);
 
-    log_debug("msg-hdr [type=%s flags=0x%x addr_len=%d size=%d]", 
+    log_debug("msg-hdr [type=%s flags=0x%x addr_len=%d size=%d]",
         pbb_type_tostr(msg->type), msg->flags, msg->addr_len, msg->size);
 
     // msg-size
@@ -652,10 +652,10 @@ static int enc_pbb_tlv(struct pkt_buf *buf, struct pbb_tlv *tlv)
     if (flags & TLVF_TYPEEXT) {
         if (!push_val(buf, ext, 1)) return -1;
     }
-   
+  
     // table 3
     switch(tlv->flags & (TLVF_SINGLEINDEX | TLVF_MULTIINDEX)) {
-    case TLVF_SINGLEINDEX: 
+    case TLVF_SINGLEINDEX:
         if (!push_val(buf, tlv->idx_start, 1)) return -1;
         break;
     case TLVF_MULTIINDEX:
@@ -771,7 +771,7 @@ static int enc_ab_now(struct pkt_buf *buf, struct pbb_ab *ab)
         if (!push_val(buf, ab->head_len, 1)) return -1;
         if (ab->head_len && !push_mem(buf, addr, ab->head_len)) return -1;
     }
-    
+   
     // table 1
     switch(ab->flags & (PBB_ABF_FULLTAIL | PBB_ABF_ZEROTAIL)) {
     case PBB_ABF_FULLTAIL:
@@ -811,8 +811,8 @@ static bool compat_prefix(struct pbb_ab *ab, struct pbb_node *mn)
     if (!ab_has_prefix && !mn_has_prefix) return true;
     if (ab_has_prefix != mn_has_prefix) return false;
     if (ab->flags & PBB_ABF_SPRELEN) return mn->prefix == ab->prefix[0];
-    
-    // blk is MULTI_PRELEN 
+   
+    // blk is MULTI_PRELEN
     return true;
 }
 
@@ -846,7 +846,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
         }
 
         if (head_len + tail_len >= ab->addr_len) {
-            tail_len = ab->addr_len - head_len - 1; 
+            tail_len = ab->addr_len - head_len - 1;
         }
 
         if ((ab->head_len || ab->tail_len) && (!head_len && !tail_len)) return false;
@@ -869,8 +869,8 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
                 if (tail[i] != 0) break;
                 nzero++;
             }
-            ab->flags |= (nzero == ab->tail_len) 
-                ? PBB_ABF_ZEROTAIL 
+            ab->flags |= (nzero == ab->tail_len)
+                ? PBB_ABF_ZEROTAIL
                 : PBB_ABF_FULLTAIL;
         }
     }
@@ -905,7 +905,7 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
     log_debug("buf_pos=%zu nodes=%d", pkt_buf_pos(buf), msg->num_node);
 
     uint8_t prefix[PBB_MSG_MAXNODE];
-    struct pbb_ab ab = { 
+    struct pbb_ab ab = {
         .addr_len = msg->addr_len,
         .prefix = prefix
     };
@@ -928,7 +928,7 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 }
 
 // encode well-known tlvs for message
-static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg) 
+static int enc_known_tlvs(struct pkt_buf *buf, struct pbb_msg *msg)
 {
     log_debug("buf_pos=%zu did=%u", pkt_buf_pos(buf), msg->did);
 
@@ -983,7 +983,7 @@ static int enc_msg_fields(struct pkt_buf *buf, struct pbb_msg *msg)
 // 5.2 encode <message>
 static int enc_pbb_msg(struct pkt_buf *buf, struct pbb_msg *msg)
 {
-    log_debug("buf_pos=%zu buf_len=%zu type=%d flags=0x%x", 
+    log_debug("buf_pos=%zu buf_len=%zu type=%d flags=0x%x",
         pkt_buf_pos(buf), pkt_buf_len(buf), msg->type, msg->flags);
 
     // msg-header type|flags|addr-length|size|
@@ -1036,7 +1036,7 @@ ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len)
 }
 
 ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len)
-{ 
+{
     struct pkt_buf buf = PKT_BUF_INIT(mem, len);
 
     int rc = dec_pbb_hdr(&buf, hdr);
@@ -1127,10 +1127,10 @@ static char *u32toa(uint32_t val, char *buf, size_t len)
         val /= 10;
     }
 
-    return str; 
+    return str;
 }
 
-static char *u32_tostr(uint32_t val) 
+static char *u32_tostr(uint32_t val)
 {
     static char bufs[16][10];
     static int idx;
@@ -1143,7 +1143,7 @@ static char *u32_tostr(uint32_t val)
 
 const char *pbb_field_tostr(int field)
 {
-    char *str = field >= 0 && field < (int) ARR_LEN(field2str) 
+    char *str = field >= 0 && field < (int) ARR_LEN(field2str)
         ? field2str[field] : NULL;
 
     return str ?: u32_tostr(field);
@@ -1153,7 +1153,7 @@ const char *pbb_field_tostr(int field)
 
 const char *pbb_addr_tostr(size_t len, uint8_t addr[static len])
 {
-    static char bufs[4][ADDR_STRLEN]; 
+    static char bufs[4][ADDR_STRLEN];
     static int idx;
 
     char *buf = bufs[idx];
@@ -1190,7 +1190,7 @@ size_t pbb_node_puts(struct pkt_buf *buf, struct pbb_node *mn, int addr_len)
 
 const char *pbb_node_tostr(struct pbb_node *mn, int addr_len)
 {
-    static char bufs[4][128]; 
+    static char bufs[4][128];
     static int idx;
 
     char *str = bufs[idx];
@@ -1211,7 +1211,7 @@ const char *pbb_type_tostr(uint8_t type)
     switch(type) {
     case  0:  return "HELLO";
     case  1:  return "TC";
-    // DYMO / AODV2 
+    // DYMO / AODV2
     case 10:  return "RREQ";
     case 11:  return "RREP";
     case 12:  return "RERR";
@@ -1225,7 +1225,7 @@ uint8_t pbb_str_totype(const char *str)
     if (!strcasecmp(str, "HELLO")) return 0;
     if (!strcasecmp(str, "TC"))    return 1;
 
-    // DYMO / AODV2 
+    // DYMO / AODV2
     if (!strcasecmp(str, "RREQ")) return 10;
     if (!strcasecmp(str, "RREP"))  return 11;
     if (!strcasecmp(str, "RERR"))  return 12;

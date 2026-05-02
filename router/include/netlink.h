@@ -1,7 +1,7 @@
 #ifndef _NETLINK_H_
 #define _NETLINK_H_
 
-// TODO (settings common both to both user/kernel space)
+// settings common both to both user/kernel space
 // default settings from draft-ietf-manet-dymo-21.txt
 #define DYMO_INTERFACE "wlan0"
 #define DYMO_PORT  269
@@ -23,7 +23,7 @@ struct yamir_msg {
 struct genl_request {
     struct nlmsghdr n;
     struct genlmsghdr g;
-     // Space for: (attr_hdr + u32) + (attr_hdr + int)
+    // Space for: (attr_hdr + u32) + (attr_hdr + int)
     char buf[64] __attribute__((aligned(4))); 
 };
 
@@ -51,6 +51,5 @@ enum {
 };
 
 #define YAIMR_RT_MAX (_YAMIR_RT_MAX - 1)
-
 
 #endif

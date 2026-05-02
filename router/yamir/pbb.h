@@ -2,7 +2,7 @@
  * PBB - PacketBB codec for MANET packets
  * --------------------------------------
  * A lightweight PacketBB (rfc5444) codec API for encoding/decoding MANET packets.
- * 
+ *
  * - No dynamic memory allocation (malloc-free) for deterministic performance.
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
@@ -13,7 +13,7 @@
  * ----------
  * struct pkt_buf  - packet buffer for reading/writing data
  * struct pbb_hdr  - MANET packet header (pkt-header)
- * struct pbb_msg  - MANET message 
+ * struct pbb_msg  - MANET message
  * struct pbb_node - Address info (addr-blocks/tlv-block)
  *
  *
@@ -144,14 +144,14 @@ static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
 size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
-// 5.3 <addr-flags> 8-bit field - network order (i.e MSB is bit 0) 
+// 5.3 <addr-flags> 8-bit field - network order (i.e MSB is bit 0)
 #define PBB_ABF_HEAD     (1 << 7) // ahashead
 #define PBB_ABF_FULLTAIL (1 << 6) // ahasfulltail
 #define PBB_ABF_ZEROTAIL (1 << 5) // ahaszerotail
 #define PBB_ABF_SPRELEN  (1 << 4) // ahassingleprelen
 #define PBB_ABF_MPRELEN  (1 << 3) // ahasmultiprelen
 
-// 5.4. TLVs and TLV Blocks 
+// 5.4. TLVs and TLV Blocks
 struct pbb_tlv {
     uint16_t type;
     uint8_t flags;
@@ -161,7 +161,7 @@ struct pbb_tlv {
     uint8_t *val;
 };
 
-// <tlv-flags> 8-bit field - network order (i.e MSB is bit 0) 
+// <tlv-flags> 8-bit field - network order (i.e MSB is bit 0)
 #define TLVF_TYPEEXT     (1 << 7)
 #define TLVF_SINGLEINDEX (1 << 6)
 #define TLVF_MULTIINDEX  (1 << 5)
@@ -198,7 +198,7 @@ struct pbb_hdr {
     struct pbb_tlv tlvs[PBB_HDR_MAXTLV];
 };
 
-// header flags <pkt-flags> 4-bit field - network-order (i.e MSB is bit 0) 
+// header flags <pkt-flags> 4-bit field - network-order (i.e MSB is bit 0)
 #define PBB_HF_SEQN (1 << 3)
 #define PBB_HF_TLV  (1 << 2)
 
@@ -282,9 +282,9 @@ static inline bool pbb_node_pref(const struct pbb_node *mn)
 /* MANET message 5.2 */
 
 struct pbb_msg {
-    // <msg-header> 
+    // <msg-header>
     uint8_t type;
-    uint8_t flags; 
+    uint8_t flags;
     uint8_t addr_len;
     uint16_t size;
     // optional fields
@@ -299,7 +299,7 @@ struct pbb_msg {
     uint8_t num_node;
     uint8_t num_tlv;
     // well know tlv fields
-    uint32_t did; 
+    uint32_t did;
     // address extracted from address blocks
     struct pbb_node *target;
     struct pbb_node *origin;
@@ -308,7 +308,7 @@ struct pbb_msg {
     struct pbb_node nodes[PBB_MSG_MAXNODE];
 };
 
-// <msg-flags> 4-bit field - network order (i.e MSB is bit 0) 
+// <msg-flags> 4-bit field - network order (i.e MSB is bit 0)
 #define PBB_MF_ORIG  (1 << 3)
 #define PBB_MF_HLIM  (1 << 2)
 #define PBB_MF_HCNT  (1 << 1)
