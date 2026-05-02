@@ -395,7 +395,7 @@ static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
     int pid = info->snd_portid;
     int cmd = info->genlhdr->cmd;
 
-    pr_debug("kyamir: nl-recv lock netid=%d nsid=%u pid=%d cmd=%d\n", kyamir_netid, net->ns.inum, pid, cmd);
+    pr_debug("kyamir: nl-recv netid=%d nsid=%u pid=%d cmd=%d\n", kyamir_netid, net->ns.inum, pid, cmd);
 
     mutex_lock(&ks->kyamirnl_mutex);
     int rc = -EINVAL;
@@ -412,8 +412,6 @@ static struct genl_family my_gnl_family;
 
 static bool build_msg(struct sk_buff *skb, int type, struct yamir_msg *msg)
 {
-    pr_debug("kyamir: build_msg-init netid=%d type=%d\n", kyamir_netid, type);
-
     // start
     void *hdr = genlmsg_put(skb, 0, 0, &my_gnl_family, 0, type);
     if (!hdr) return false;
@@ -424,8 +422,6 @@ static bool build_msg(struct sk_buff *skb, int type, struct yamir_msg *msg)
 
     // end
     genlmsg_end(skb, hdr);
-
-    pr_debug("kyamir: build_msg-done netid=%d type=%d\n", kyamir_netid, type);
 
     return true;
 }

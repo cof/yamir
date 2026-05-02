@@ -6,8 +6,8 @@
 # all        : build yamid, kyamir
 # yamird     : user-space router
 # kyamir     : kernel-space module
-# test       : PacketBB tests
-# test-yamir : VM for testing router
+# test       : run PacketBB tests
+# test-yamir : setup VM for router testing
 #
 YAMIR = yamird
 KYAMIR_DIR = kyamir
