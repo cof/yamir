@@ -5,7 +5,7 @@ This is a custom admin tool for managing the YAMIR router on android devices.
 These are packaged together into an android apk file yamir-android.apk. 
 
 Code includes parts of iwconfig (GPLv2) and WiFi firmware to enable 802.11 Ad-hoc mode.   
-Note the app also needs a rooted handset (ie. su installed) to start/stop the MANET.
+Note the app also needs a rooted handset (su installed) to start/stop the MANET.
 
 The application consists of 2 parts.
 
@@ -24,15 +24,15 @@ This contains the following scripts and binaries
 - iwconfig to enable Ad-hoc mode (from wireless-tools) 
 - killall (from psmisc)
 
-Note the app needs a complied kernel module and shell script specfic to Samsung S2 and HTC Desire.   
-This is because the andorid kernel and the method to control the Wi-Fi interface differ.
+Note the app needs a complied kyamir and shell script for each Android device.  
+This is because the kernel and insmod method to control the Wi-Fi interface differ.
 
-The iwconfig and killall are needed these are not standard on android handsets. 
+The iwconfig and killall are needed as these are not standard on android handsets. 
 
-As yamir, iwconfig, killall are userspace binaries they can be compiled for generic ARM.
+As yamir, iwconfig, killall are all userspace binaries they can be compiled for generic ARM.
 
-All of the binaries and shell scripts are located in the raw resource folder where they must be first unpacked before use. 
-This is because the Android apk build tool and the handset apk installer allow native libraries but blacklist any executables.
+All of the binaries and shell scripts are located in the raw resource folder where they must be first unpacked before use.  
+This is because the Android apk build tool and the handset apk installer only allow native libraries, blacklisting executables.
 
 ## Frontend
 
@@ -46,9 +46,9 @@ The GUI consists of 2 files
 On first being started by Android the app locates its installation dir and the the su tool.   
 The app unpacks the backend binaries and shell scripts into its work area with the correct permissions.
 
-On pressing the “Start” button the app checks if the backend has been installed correctly and then writes out the settings to a config file that can be read by the yamir.sh script. It then execs via su the yamir.sh script with the start option and the pathname of the config file, displaying the results to the user in the status log. 
+On pressing the “Start” button the app checks if the backend has been installed correctly and then writes the settings to a config file that is read by the yamir.sh script. It then execute with su the yamir.sh script with the start option and the config file path, displaying the results to the user in the status log. 
 
-Pressing “Stop” likewise calls yamir.sh with the stop option and the previous config file path.
+Pressing “Stop” likewise calls yamir.sh with the stop option and the config file path.
 
 *SettingsActivity* allows the following settings to be modified:
 
