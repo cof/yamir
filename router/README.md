@@ -31,10 +31,10 @@ Uses a kernel module to detect route requirements and a userspace daemon for rou
 
 ## Design
 
-Original kernel module code ran on 2.6 kernel and used global state, user-mode
+Original kyamir was written for 2.6 kernel and used global state, user-mode
 netlink socket, rwlocks and netfilter hooks.
 
-Kernel module was rewritten to use
+Kernel module code was rewritten to use
 
 - generic netlink for message exchange between yamird and kyamir
 - pernet subsystem with non global state storage
