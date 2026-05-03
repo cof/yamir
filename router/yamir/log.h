@@ -81,13 +81,14 @@ void _log_msg(const char *file, int line, const char *func,
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
 
+#define LOG_FAIL -1
+
 // logger levels
 #define LOG_NONE  0
 #define LOG_FATAL 1
 #define LOG_ERROR 2
 #define LOG_INFO  3
 #define LOG_DEBUG 4
-
 
 /*
  * macros : various msg-str and fmt-str macros
@@ -106,6 +107,7 @@ void log_argv(const char *what, int argc, char *argv[]);
  * log_errno_rf(...)        : log error msg + errno - return fail
  * log_errno_rc(...)        : log error msg + errno - return code
  * log_errno_rn(...)        : log error msg + errno - return null
+ * log_errno_rv(...)        : log error msg + errno - return void
  * -
  * log_ec(ec, ...)          : log error msg with ec as errno
  * log_ec_rf(ec, ..,)       : log error msg with ec as errno - return fail
@@ -114,7 +116,6 @@ void log_argv(const char *what, int argc, char *argv[]);
  * fatal_errno(...)         : log fatal error msg and errno and exit
  */
 
-#define LOG_FAIL -1
 
 #define log_msg(...) \
     _log_msg(NULL, 0, NULL, 0, LOG_NONE, 0, __VA_ARGS__)
@@ -132,7 +133,6 @@ void log_argv(const char *what, int argc, char *argv[]);
     (rc); \
 })
 
-
 #define log_cmd_err(cmd, opt, ...) ({ \
     _log_msg(cmd, 0, opt, 0, LOG_NONE, "ERROR", __VA_ARGS__); \
     LOG_FAIL; \
@@ -149,7 +149,6 @@ void log_argv(const char *what, int argc, char *argv[]);
     } \
     (rc); \
 })
-
 
 #define log_error(...) \
     if (log_level >= LOG_ERROR) { \

@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
 #include "log.h"
 
 int log_level = 0;
@@ -34,10 +35,10 @@ void _log_msg(const char *file, int line, const char *func,
 {
     if (!who) {
         switch(what) {
+        case LOG_FATAL: who = "FATAL"; break;
+        case LOG_ERROR: who = "ERROR"; break;
         case LOG_INFO:  who = "INFO";  break;
         case LOG_DEBUG: who = "DEBUG"; break;
-        case LOG_ERROR: who = "ERROR"; break;
-        case LOG_FATAL: who = "FATAL"; break;
         }
     }
 
