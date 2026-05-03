@@ -16,9 +16,9 @@
  * - netlink notfier
  * - netfilter hooks
  * - mutex for netlink messages
- * - spinlock/RCU for route listchanges
+ * - spinlock/RCU for route list changes
  * - spinlock for packet list changes
- * - atomic read/wrie for pid changes
+ * - atomic read/wrie for netlink pid changes
  *
  * netfilter
  * =========
