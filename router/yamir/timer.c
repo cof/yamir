@@ -5,7 +5,7 @@
  *
  * Notes
  * ------
- * Uses a minium binary heap aka priortity queue
+ * Uses a minimum binary heap aka priortity queue
  * Based on the classc barkley and lee usenix 88 paper
  * A Heap-Based Callout Implementation to Meet Real-Time Needs
 */

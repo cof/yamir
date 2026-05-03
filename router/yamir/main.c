@@ -4,7 +4,7 @@
  * This a userspace IP router with
  *
  *  - kyamir updates via netlink-generic
- *  - route mangement via rtnetlink
+ *  - route management via rtnetlink
  *  - route discovery via DYMO protocol
  *  - PacketBB codec to read/write messages
  *
@@ -436,7 +436,7 @@ static struct dymo_rt *route_find(struct yamir_state *ys, uint32_t addr)
 // section 5.2.1.
 static int node_superior(struct pbb_node *mn, struct dymo_rt *dr, int msg_type)
 {
-    // 1. stale (whats wrong with signed 32 bit)
+    // 1. stale (what's wrong with signed 32 bit)
     if ((int16_t) mn->seqnum - (int16_t) dr->seqnum < 0) {
         return 0;
     }
@@ -828,7 +828,7 @@ static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_
 {
     log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rmsg));
 
-    // append addtional routing info
+    // append additional routing info
 
     // distance checks
     if (!inc_node_dist(rmsg->origin)) return 0;
@@ -1188,7 +1188,7 @@ static void route_inuse(struct yamir_state *ys, uint32_t addr, int ifindex)
     struct dymo_rt *dr = route_find(ys, addr);
     if (!dr) return;
 
-    // can't really attend to a route thats been marked as broken
+    // can't really attend to a route that's been marked as broken
     if (dr_isbroken(dr)) {
         log_debug("route_update(%s:%d) route is broken", addr_tostr(dr->addr), dr->flags);
         return;

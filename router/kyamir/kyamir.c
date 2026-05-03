@@ -1,17 +1,24 @@
 /*
  * Yet Another Manet IP Router (YAMIR)
+ *
  * kyamir - kernel space yamir module
- * ----------------------------------
- * Intercepts IP packets via netfilter hooks for userspace route discovery.
+ *
+ * Used by YAMIR userspace router to detect route requirements.
+ * Module use netfilter hooks to intercept IP packets and netlink
+ * to exchange routing messages with userspace.
  *
  * Uses
  * ====
- * - NETLINK_GENERIC
+ * - generic netlink
  * - pernet subsystem
  * - netdevice notifier
  * - inetaddr notifier
  * - netlink notfier
  * - netfilter hooks
+ * - mutex for netlink messages
+ * - spinlock/RCU for route listchanges
+ * - spinlock for packet list changes
+ * - atomic read/wrie for pid changes
  *
  * netfilter
  * =========
@@ -326,7 +333,7 @@ static void send_packets(struct kyamir_state *ks, struct net *net, __be32 addr)
     }
 }
 
-// receive msg from userpace
+// receive msg from userspace
 static int yamir_recv_msg(struct kyamir_state *ks,
     struct net *net, int pid,
     int cmd, struct yamir_msg *msg)
@@ -338,23 +345,24 @@ static int yamir_recv_msg(struct kyamir_state *ks,
 
     switch(cmd) {
     case YAMIR_RT_REG:
+        // userspace has registered
         atomic_set(&ks->peer_pid, pid);
         pr_info("kyamir: netlink userspace pid=%d\n", pid);
         break;
     case YAMIR_RT_NONE:
+        // userspace reports no route for addr
         if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
-        // no route for addr
         drop_packets(ks, msg->ip4_addr);
         break;
     case YAMIR_RT_ADD:
+        // userspace added route
         if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
-        // no route for addr
         add_route(ks, msg->ip4_addr);
         send_packets(ks, net, msg->ip4_addr);
         break;
     case YAMIR_RT_DEL:
+        // userspace deleted route
         if (pid != atomic_read(&ks->peer_pid)) return -EPERM;
-        // no route for addr
         del_route(ks, msg->ip4_addr);
         drop_packets(ks, msg->ip4_addr);
         break;
@@ -999,4 +1007,4 @@ module_exit(dymo_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Cyril O'Floinn");
-MODULE_DESCRIPTION("Intercepts IP packets via Nefilter hooks for YAMIR userspace router");
+MODULE_DESCRIPTION("YAMIR netfilter packet interceptor for userspace route discovery");
