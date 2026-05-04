@@ -91,7 +91,6 @@ struct kyamir_state {
     uint32_t packet_count;
     // netlink
     atomic_t peer_pid;
-    struct mutex kyamirnl_mutex;
     // interface
     char ifname[IFNAMSIZ];
     int ifindex;
@@ -404,13 +403,10 @@ static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
 
     pr_debug("kyamir: nl-recv netid=%d nsid=%u pid=%d cmd=%d\n", kyamir_netid, net->ns.inum, pid, cmd);
 
-    mutex_lock(&ks->kyamirnl_mutex);
     int rc = -EINVAL;
     if (load_msg(&msg, info)) {
         rc = yamir_recv_msg(ks, net, pid, cmd, &msg);
     }
-
-    mutex_unlock(&ks->kyamirnl_mutex);
 
     return rc;
 }
@@ -855,7 +851,6 @@ static int __net_init my_init_net(struct net *net)
 
     // init netlink
     atomic_set(&ks->peer_pid, 0);
-    mutex_init(&ks->kyamirnl_mutex);
 
     // init interface
     ks->ifindex = -1;

@@ -32,7 +32,7 @@ Uses a kernel module to detect route requirements and a userspace daemon for rou
 ## Design
 
 Original kyamir was written for 2.6 kernel and used global state, user-mode
-netlink socket, rwlocks and netfilter hooks.
+netlink socket, rwlocks, and a mutex.
 
 Kernel module code was rewritten to use
 
