@@ -31,16 +31,26 @@ Uses a kernel module to detect route requirements and a userspace daemon for rou
 
 ## Design
 
-Original kyamir was written for 2.6 kernel and used global state, user-mode
-netlink socket, rwlocks, and a mutex.
+yamir in 2012 was orignally built to run on linux 2.6 kernels and used global
+state, select() driven I/O, user-mode netlink socket, rwlocks and a mutex.
 
-Kernel module code was rewritten to use
+Code was rewritten to run on modern Linux kernel as shown below.
+
+kyamir uses
 
 - generic netlink for message exchange between yamird and kyamir
+- netfilter hooks (PRE_ROUTING, LOCAL_OUT, POST_ROUTING)
 - pernet subsystem with non global state storage
 - netdevice notifier to detect interface changes
 - inetaddr notifier to detect IP address changes
 - spinlocks, rcu, atomic for state changes
+
+yamird uses
+
+- PacketBB API codec with full address compression supprt
+- Timer API with ms resolution for DYMO timeouts
+- levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
+- poll driven I/O
 
 
 ## Testing
