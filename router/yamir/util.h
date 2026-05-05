@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2012-2026 [cof] */
+
 #ifndef _UTIL_H_
 #define _UTIL_H_
 

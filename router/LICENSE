@@ -1,21 +1,22 @@
-CONSOLIDATED SOURCE CODE LICENSE
-Copyright (c) 2026 Cyril O'Floinn. All rights reserved.
+MIT License
 
-1. OWNERSHIP: All source code, documentation, and logic contained within this
-   repository (the "Software") are the exclusive intellectual property of the
-   Author (Cyril O'Floinn).
+Copyright (c) 2026 cof
 
-2. RESTRICTIONS: No person, entity, or organization is granted permission to
-   use, copy, modify, merge, publish, distribute, sublicense, or sell the
-   Software, in whole or in part, for any purpose.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-3. LIMITED EVALUATION LICENSE: The Author grants limited permission for the
-   Software to be accessed and read solely for the purpose of technical
-   evaluation and hiring assessments. This does not constitute a transfer
-   of ownership or a license for internal, commercial, or production use.
-   All other rights are strictly reserved.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-4. INQUIRIES: For licensing or permission requests, please contact the Author
-   directly at cof@fastmail.fm.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

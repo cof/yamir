@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2012-2026 [cof] */
+
 /*
  * YAMIR - Yet Another MANET IP Router
  *
