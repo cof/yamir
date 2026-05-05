@@ -31,7 +31,7 @@ Uses a kernel module to detect route requirements and a userspace daemon for rou
 
 ## Design
 
-yamir in 2012 was orignally built to run on linux 2.6 kernels and used global
+yamir in 2012 was originally built to run on a linux 2.6 kernel and used global
 state, select() driven I/O, user-mode netlink socket, rwlocks and a mutex.
 
 Code was rewritten to run on modern Linux kernel as shown below.
@@ -47,7 +47,7 @@ kyamir uses
 
 yamird uses
 
-- PacketBB API codec with full address compression supprt
+- PacketBB API codec with full address compression support
 - Timer API with ms resolution for DYMO timeouts
 - levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
 - poll driven I/O
