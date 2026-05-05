@@ -1003,5 +1003,5 @@ module_init(dymo_init);
 module_exit(dymo_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Cyril O'Floinn");
+MODULE_AUTHOR("cof");
 MODULE_DESCRIPTION("YAMIR netfilter packet interceptor for userspace route discovery");
