@@ -6,7 +6,7 @@
  * A simple min-heap based timer API featuring
  *
  * - malloc-free - No dynamic memory allocation for timer state
- * - Intrusive-design: state structures allow for inline embedding and object composition
+ * - Intrusive-design: structures allow for inline embedding and object composition
  * - Monotonic Precision: uses CLOCK_MONOTONIC for ms-accurate clock-shift proof time-keeping
  * - next-expiry: calcs next deadline for poll/select driven I/O timeouts.
 *

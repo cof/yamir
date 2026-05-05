@@ -6,7 +6,7 @@
  * A lightweight PacketBB (rfc5444) codec API for encoding/decoding MANET packets.
  *
  * - No dynamic memory allocation (malloc-free) for deterministic performance.
- * - Intrusive-design: state structures allow for inline embedding and object composition
+ * - Intrusive-design: structures allow for inline embedding and object composition
  * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
  * - Provides buffer, header and message structures for easy pkt generation.
  * - Supports address compression and expansion.
