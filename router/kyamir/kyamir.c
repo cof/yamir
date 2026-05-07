@@ -149,7 +149,7 @@ static void flush_routes(struct kyamir_state *ks)
 
 static int add_route(struct kyamir_state *ks, __be32 ip4_addr)
 {
-    struct yamir_route *yr = kmalloc(sizeof(*yr), GFP_KERNEL);
+    struct yamir_route *yr = kzalloc(sizeof(*yr), GFP_KERNEL);
     if (!yr) return -ENOMEM;
 
     yr->ip4_addr = ip4_addr;
