@@ -399,7 +399,7 @@ enum pbb_field {
 
 // api
 struct pbb_node *pbb_add_node(struct pbb_msg *msg);
-struct pbb_node *pbb_copy_node(struct pbb_msg *msg, struct pbb_node *src);
+struct pbb_node *pbb_copy_node(struct pbb_msg *msg, const struct pbb_node *src);
 
 // mem encode/decode
 ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len);

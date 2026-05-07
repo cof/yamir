@@ -94,7 +94,7 @@ static void pbb_ab_reset(struct pbb_ab *ab)
 
 /* decoders */
 
-static inline uint32_t dec_u32(uint8_t *ptr, int size)
+static inline uint32_t dec_u32(const uint8_t *ptr, int size)
 {
     switch(size) {
     case 1: return ptr[0];
@@ -150,7 +150,7 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
     int single_len = 0;
     if (tlv->flags & TLVF_VALUE) {
         int num_val = idx_stop - idx_start + 1;
-        single_len = tlv->flags & TLVF_MULTIVALUE
+        single_len = (tlv->flags & TLVF_MULTIVALUE) != 0
             ? tlv->vlen / num_val
             : tlv->vlen;
     }
@@ -392,18 +392,7 @@ static int dec_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
     log_debug("buf_rem=%zu", pkt_buf_rem(buf));
 
-    uint8_t head[32];
-    uint8_t tail[32];
-    uint8_t mid[512];
-    uint8_t prefix[32];
-
-    struct pbb_ab ab = {
-        .head = head,
-        .tail = tail,
-        .mid  = mid,
-        .prefix = prefix,
-        .addr_len = msg->addr_len
-    };
+    struct pbb_ab ab = { .addr_len = msg->addr_len };
 
     while (pkt_buf_rem(buf)) {
         if (dec_ab_now(buf, &ab)) return -1;
@@ -906,7 +895,7 @@ static int enc_pbb_nodes(struct pkt_buf *buf, struct pbb_msg *msg)
 {
     log_debug("buf_pos=%zu nodes=%d", pkt_buf_pos(buf), msg->num_node);
 
-    uint8_t prefix[PBB_MSG_MAXNODE];
+    uint8_t prefix[PBB_MSG_MAXNODE] = { 0 };
     struct pbb_ab ab = {
         .addr_len = msg->addr_len,
         .prefix = prefix
@@ -1017,7 +1006,7 @@ struct pbb_node *pbb_add_node(struct pbb_msg *msg)
     return pbb_node_reset(&msg->nodes[msg->num_node++]);
 }
 
-struct pbb_node *pbb_copy_node(struct pbb_msg *msg, struct pbb_node *src)
+struct pbb_node *pbb_copy_node(struct pbb_msg *msg, const struct pbb_node *src)
 {
     struct pbb_node *dst = pbb_add_node(msg);
 

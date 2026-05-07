@@ -195,8 +195,9 @@ static int enc_pkt(struct pkt_buf *dst, const char *str)
         size_t len = ptr ? ptr - str : end - str;
         memcpy(field, str, len);
         field[len] = '\0';
-        while (str < end && str[len] == ' ') len++;
         str += len;
+        // skip white space
+        while (str < end && (*str == ' ' || *str == '\t')) str++;
 
         // extract name:value
         char *fn = field;
@@ -290,8 +291,9 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
         size_t len = ptr ? ptr - str : end - str;
         memcpy(field, str, len);
         field[len] = '\0';
-        while (str < end && str[len] == ' ') len++;
         str += len;
+        // skip white space
+        while (str < end && (*str == ' ' || *str == '\t')) str++;
 
         // extract name:value
         char *fn = field;
@@ -623,7 +625,7 @@ static int test_file(const char *file)
     fclose(f);
 
     if (state != 0) {
-        log_error_rf("line %d missing end %d", lineno, cmd);
+        log_error_rf("line %d missing end %u", lineno, cmd);
     }
 
     return num_fail;

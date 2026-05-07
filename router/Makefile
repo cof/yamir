@@ -25,7 +25,9 @@ include scripts/verbose.mk
 GCC_DEPS     := -MMD -MP
 CPP_FLAGS    := -D_GNU_SOURCE -Iinclude -Iyamir
 YAMIR_CFLAGS := -Wall \
-	-Wextra -Wno-missing-field-initializers \
+	-Wextra \
+	-Wformat -Wformat-signedness \
+	-Wno-missing-field-initializers \
 	-Wmissing-prototypes -Wstrict-prototypes \
 	-Wno-unused-parameter \
 	-Werror=sign-compare \

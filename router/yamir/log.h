@@ -79,7 +79,7 @@ extern int log_level;
  */
 void log_init(FILE *dst, int level);
 void _log_msg(const char *file, int line, const char *func,
-    int ec, int what, const char *what_str, const char *fmt, ...)
+    int ec, int what, const char *who, const char *fmt, ...)
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
 
