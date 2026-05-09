@@ -3,7 +3,7 @@
 /*
  * LOG - the logger API
  * --------------------
- * A logger API that can report informaton and detailed error msesages.
+ * A logger API that can report information and detailed error msesages.
  *
  * Just call log_init() to set the log-level and use macros to log messages.
  *
@@ -25,14 +25,14 @@
  *  INFO  - "[who] fmt-str"
  *  DEBUG - "[DEBUG] file:line func: fmt-str
  *
- * Logger use printf fmt-str to allow complete control of whats logged.
+ * Logger use printf fmt-str to allow complete control of what's logged.
  *
  * e.g
  *  log_info("+", "The service is up");
  *  log_info("INFO", "did %s","something");
  *
  * Logger has macros that report the FILE, LINE and FUNC where an error has
- * occured allowing users to easily trace problems in the code base.
+ * occurred allowing users to easily trace problems in the code base.
  *
  * Logger also has a range of macros that can be used to both log a message
  * and return from a function all in one line.
@@ -64,9 +64,8 @@
 #ifndef _LOG_H_
 #define _LOG_H_
 
-#include <stdio.h>
-#include <errno.h>
-
+#include <stdio.h> // for FILE *
+#include <errno.h> // for errno
 
 extern int log_level;
 

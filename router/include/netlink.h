@@ -7,9 +7,11 @@
 #define DYMO_PORT  269
 
 // rtm_protocol - See /usr/include/linux/rtnetlink.h
-#define YAMIR_RTNETLINK 30
 #define YAMIR_NL_NAME "yamir_netlink"
 #define YAMIR_NL_GROUP 0
+
+// private routing protocol
+#define YAMIR_RT_PROTO 253
 
 // TODO remove these
 #define NETLINK_YAMIR NETLINK_USERSOCK
@@ -40,8 +42,6 @@ enum {
     // sent to kaymir
     YAMIR_RT_REG   = 0, // register
     YAMIR_RT_NONE  = 1, // no-route
-    YAMIR_RT_ADD   = 2, // route-add
-    YAMIR_RT_DEL   = 3, // route-del
     // recv from kyamir
     YAMIR_RT_NEED  = 4, // need-route
     YAMIR_RT_INUSE = 5, // route-inuse

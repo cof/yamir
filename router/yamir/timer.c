@@ -71,7 +71,7 @@ static void slot_release(struct timer_mgr *tm, struct timer_slot *ts)
 {
     int tid = ts - tm->slot;
 
-    log_debug("ntimer=%d tid=%d", tm->num_timer, tid);
+    log_debug("tid=%d ntimer=%d", tm->num_timer, tid);
 
     ts->hidx = tm->free_head;
     ts->flags = 0;
@@ -142,7 +142,7 @@ int timer_check(struct timer_mgr *tm)
 {
     tm->now_ms = get_now_ms();
 
-    log_debug("ntimer=%d now_ms=%lu" , tm->num_timer, tm->now_ms);
+    log_debug("now_ms=%lu ntimer=%d", tm->now_ms, tm->num_timer);
 
     while (tm->num_timer) {
         int tid = tm->heap[0];
@@ -178,7 +178,7 @@ int timer_check(struct timer_mgr *tm)
 
 int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *arg)
 {
-    log_debug("ntimer=%d ms=%lu cb=%p arg=%p", tm->num_timer, ms, cb, arg);
+    log_debug("ms=%lu cb=%p arg=%p ntimer=%d", ms, cb, arg, tm->num_timer);
 
     int tid = get_free_slot(tm);
     if (tid == -1) return -1;
@@ -195,14 +195,15 @@ int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *ar
     tm->heap[tm->num_timer++] = tid;
     minheap_siftup(tm, tm->num_timer - 1);
 
-    log_debug("ntimer=%d tid=%d now_ms=%lu expiry=%lu hidx=%d", tm->num_timer, tid, now_ms, ts->expiry, ts->hidx);
+    log_debug("tid=%d now_ms=%lu expiry=%lu hidx=%u ntimer=%d", 
+        tid, now_ms, ts->expiry, ts->hidx, tm->num_timer);
 
     return tid;
 }
 
 void timer_cancel(struct timer_mgr *tm, int tid)
 {
-    log_debug("ntimer=%d tid=%d", tm->num_timer, tid);
+    log_debug("tid=%d ntimer=%d", tid, tm->num_timer);
 
     if (tid < 0 || tid >= TIMER_MAXSLOT) return;
 
