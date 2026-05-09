@@ -322,7 +322,7 @@ static const char *recv_state_tostr(struct recv_state *rs)
 }
 
 static struct dymo_req *route_findreq(struct yamir_state *ys, uint32_t addr);
-static void dymo_req_done(struct dymo_req *req, int rc);
+static void dymo_end_req(struct dymo_req *req, int rc);
 static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg, uint32_t *seq);
 static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr);
 
@@ -800,7 +800,7 @@ static void yamir_inc_seqnum(struct yamir_state *ys)
     ys->own_seqnum++;
 }
 
-static int dymo_msg_send(struct yamir_state *ys, struct pbb_msg *msg, uint32_t addr)
+static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t addr)
 {
     static unsigned char wbuf[WBUF_SIZE];
 
@@ -863,7 +863,7 @@ static int dymo_send_reply(struct yamir_state *ys, struct pbb_msg *req)
     reply.addr_len = 4;
 
     // we route the message via the next hop
-    return dymo_msg_send(ys, &reply, dr->nexthop_addr);
+    return dymo_send_msg(ys, &reply, dr->nexthop_addr);
 }
 
 static int dymo_recv_reply(struct yamir_state *ys, struct pbb_msg *reply)
@@ -873,7 +873,7 @@ static int dymo_recv_reply(struct yamir_state *ys, struct pbb_msg *reply)
     struct dymo_req *req;
 
     req = route_findreq(ys, reply->origin->ip4_addr);
-    if (req) dymo_req_done(req, 0);
+    if (req) dymo_end_req(req, 0);
 
     return 0;
 }
@@ -942,7 +942,7 @@ static int dymo_rerr_send(struct yamir_state *ys, uint32_t addr, uint16_t seqnum
         unreach->prefix = prefix;
     }
 
-    return dymo_msg_send(ys, &rerr, ys->mcast_addr);
+    return dymo_send_msg(ys, &rerr, ys->mcast_addr);
 }
 
 // 5.3.4 page 24 relay route-message
@@ -979,7 +979,7 @@ static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_
         dst_addr = ys->mcast_addr;
     }
 
-    return dymo_msg_send(ys, rmsg, dst_addr);
+    return dymo_send_msg(ys, rmsg, dst_addr);
 }
 
 // check valid route-message
@@ -1143,12 +1143,12 @@ static int handle_rerr(struct yamir_state *ys, struct pbb_msg *rerr, struct recv
     // for unicast RERR is this the nexthopaddress for the unreachable node
     // or the actual ip destiation address (what happens if there are more
     // than 1 unreachable node in the RERR packet ?
-    return dymo_msg_send(ys, rerr, ys->mcast_addr);
+    return dymo_send_msg(ys, rerr, ys->mcast_addr);
 }
 
 static void dymo_req_timeout(void *arg);
 
-static void dymo_req_done(struct dymo_req *req, int rc)
+static void dymo_end_req(struct dymo_req *req, int rc)
 {
     log_debug("addr=%s rc=%d", addr_tostr(req->addr), rc);
 
@@ -1169,7 +1169,7 @@ static void dymo_req_done(struct dymo_req *req, int rc)
     if (rc) route_done(dr);
 }
 
-static int dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
+static int dymo_send_request(struct yamir_state *ys, struct dymo_req *req)
 {
     log_debug("addr=%s seqnum=%u hcount=%d hlimit=%d",
         addr_tostr(req->addr), req->seqnum, req->hop_count, MSG_HOPLIMIT);
@@ -1205,8 +1205,9 @@ static int dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
     msg.origin = origin;
     origin->ip4_addr = ys->local_addr;
     origin->flags |= PBB_NF_SEQN;
+    origin->seqnum = ys->own_seqnum;
 
-    int ec = dymo_msg_send(ys, &msg, ys->mcast_addr);
+    int ec = dymo_send_msg(ys, &msg, ys->mcast_addr);
     if (ec) return ec;
 
     // wait for response
@@ -1216,7 +1217,7 @@ static int dymo_req_send(struct yamir_state *ys, struct dymo_req *req)
 
 
 // send request out for route
-static int dymo_req_out(struct dymo_req *req)
+static int dymo_out_req(struct dymo_req *req)
 {
     log_debug("%s attempt %d/%d wait %ld",
         addr_tostr(req->addr),
@@ -1238,7 +1239,7 @@ static int dymo_req_out(struct dymo_req *req)
     }
 
     // try again
-    return dymo_req_send(dr->parent, req);
+    return dymo_send_request(dr->parent, req);
 }
 
 static void dymo_req_timeout(void *arg)
@@ -1255,11 +1256,11 @@ static void dymo_req_timeout(void *arg)
         // try again
         req->tries += 1;
         req->wait_time = req->wait_time * 2;
-        ec = dymo_req_out(req);
+        ec = dymo_out_req(req);
         if (!ec) return;
     }
 
-    dymo_req_done(req, ec);
+    dymo_end_req(req, ec);
 }
 
 static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
@@ -1284,8 +1285,8 @@ static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
 
     // start discovery
 	dr->state = DRS_DISCOVER;
-    int ec = dymo_req_out(req);
-    if (ec) dymo_req_done(req, ec);
+    int ec = dymo_out_req(req);
+    if (ec) dymo_end_req(req, ec);
 
 }
 

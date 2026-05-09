@@ -239,6 +239,7 @@ struct pbb_node {
 
 static inline struct pbb_node *pbb_node_reset(struct pbb_node *mn)
 {
+    mn->ip4_addr = 0;
     mn->dist = 0;
     mn->vldtime = 0;
     mn->seqnum = 0;
