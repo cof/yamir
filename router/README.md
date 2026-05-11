@@ -40,6 +40,7 @@ kyamir uses
 
 - generic netlink for message exchange between yamird and kyamir
 - netfilter hooks (PRE_ROUTING, LOCAL_OUT, POST_ROUTING)
+- fib_lookup to check if route exists
 - pernet subsystem with non global state storage
 - netdevice notifier to detect interface changes
 - inetaddr notifier to detect IP address changes
