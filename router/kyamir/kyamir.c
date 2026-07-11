@@ -109,10 +109,8 @@ static bool route_exists(struct kyamir_state *ks, struct net *net, __be32 saddr,
 	int rc = fib_lookup(net, &fl4, &res, 0);
 	if (rc) return false;
 
-    if (res.fi->fib_protocol != YAMIR_RT_PROTO) return false;
-
-	// routable
-	return true;
+    // routable if fi exists and was installed by yamird
+    return res.fi && res.fi->fib_protocol == YAMIR_RT_PROTO;
 }
 
 static const char *hook_tostr(int hook)
