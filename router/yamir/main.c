@@ -290,9 +290,9 @@ static const char *dymo_msg_tostr(struct pbb_msg *msg)
 
     if (!msg) return "<none>";
 
-    struct pkt_buf buf = PKT_BUF_INIT(str, len);
+    struct pkt_buf buf = PKB_INIT(str, len);
 
-    pkt_buf_printf(&buf,
+    pkb_printf(&buf,
         "type=%s flags=0x%x hlim=%d did=%u nodes=%d tlvs=%d taddr=[%s] oaddr=[%s]",
         pbb_type_tostr(msg->type), msg->flags, msg->hop_limit, msg->did,
         msg->num_node, msg->num_tlv,
@@ -320,9 +320,9 @@ static const char *recv_state_tostr(struct recv_state *rs)
 
     if (!rs) return "<none>";
 
-    struct pkt_buf buf = PKT_BUF_INIT(str, len);
+    struct pkt_buf buf = PKB_INIT(str, len);
 
-    pkt_buf_printf(&buf,
+    pkb_printf(&buf,
         "saddr=%s daddr=%s ifidx=%u",
         addr_tostr(rs->saddr),
         addr_tostr(rs->daddr),
@@ -814,12 +814,12 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 
     log_debug("dst=%s msg=(%s)", addr_tostr(addr), dymo_msg_tostr(msg));
 
-    struct pkt_buf buf = PKT_BUF_INIT(wbuf, sizeof(wbuf));
+    struct pkt_buf buf = PKB_INIT(wbuf, sizeof(wbuf));
     struct pbb_hdr hdr = { 0 };
 
     // encode pkt
-    if (pkt_buf_hdr_enc(&buf, &hdr)) return log_error_rf("enc_hdr failed");
-    if (pkt_buf_msg_enc(&buf, msg))  return log_error_rf("enc_msg failed");
+    if (pkb_hdr_enc(&buf, &hdr)) return log_error_rf("enc_hdr failed");
+    if (pkb_msg_enc(&buf, msg))  return log_error_rf("enc_msg failed");
 
     // TODO implement rfc5148 jitter
 
@@ -828,7 +828,7 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = addr;
     sin.sin_port = htons(DYMO_PORT);
-    size_t len = pkt_buf_pos(&buf);
+    size_t len = pkb_pos(&buf);
 
     log_debug("sendto pkt_len=%zu dst=%s", len, sockaddr_tostr(&sin));
 
@@ -1366,15 +1366,15 @@ static int dymo_process_mmsg(struct yamir_state *ys,
     }
 
     // decode pkt data - until zero or error
-    struct pkt_buf buf = PKT_BUF_INIT(pkt, len);
+    struct pkt_buf buf = PKB_INIT(pkt, len);
     struct pbb_hdr hdr;
 
-    int ec = pkt_buf_hdr_dec(&buf, &hdr);
+    int ec = pkb_hdr_dec(&buf, &hdr);
     if (ec) return ec;
 
-    while (pkt_buf_rem(&buf)) {
+    while (pkb_rem(&buf)) {
         struct pbb_msg msg;
-        ec = pkt_buf_msg_dec(&buf, &msg);
+        ec = pkb_msg_dec(&buf, &msg);
         if (ec) continue;
         switch(msg.type) {
         case DYMO_RREQ: handle_rreq(ys, &msg, rs); break;

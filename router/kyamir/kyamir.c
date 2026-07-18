@@ -27,6 +27,10 @@
  * NF_INET_PRE_ROUTING  : packet has arrived before routing decision
  * NF_INET_LOCAL_OUT    : local socket sending packet before routing decision
  * NF_INET_POST_ROUTING : packet sent after routing decision
+ *
+ * TODO
+ * ====
+ * - Need add_packet memory limit
  */
 #include <linux/version.h>
 //#define DEBUG

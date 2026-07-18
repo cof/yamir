@@ -5,6 +5,8 @@
  * --------------------------------------
  * A lightweight PacketBB (rfc5444) codec API for encoding/decoding MANET packets.
  *
+ * Design
+ * ------
  * - No dynamic memory allocation (malloc-free) for deterministic performance.
  * - Intrusive-design: structures allow for inline embedding and object composition
  * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
@@ -21,29 +23,29 @@
  *
  * API
  * ----
- * PKT_BUF_INIT(mem, len)        : macro to init buffer
- * pkt_buf_init(buf, mem, len)   : init buffer with memory
- * pkt_buf_start(buf)            : return buffer start pointer
- * pkt_buf_ptr(buf)              : return buffer position pointer
- * pkt_buf_reset(buf)            : reset buffer position pointer to start
- * pkt_buf_end(bif)              : true if buffer pos at end
- * bkt_buf_len(buf)              : return buffer size
- * pkt_buf_rem(buf)              : return remaining read/write space in buffer
- * pkt_buf_pos(buf)              : return buffer read/write index
- * pkt_buf_inc(buf)              : increment buffer read/write index
- * pkt_buf_endz(buf)             : set buffer end to nul char if space
- * pkt_buf_mkspace(buf, len)     : return position pointer and increment if space else null
- * pkt_buf_printf(buf, fmt, ...) : printf fmt to buffer
+ * PKB_INIT(mem, len)        : macro to init buffer
+ * pkb_init(buf, mem, len)   : init buffer with memory
+ * pkb_start(buf)            : return buffer start pointer
+ * pkb_ptr(buf)              : return buffer position pointer
+ * pkb_reset(buf)            : reset buffer position pointer to start
+ * pkb_end(bif)              : true if buffer pos at end
+ * pkb_len(buf)              : return buffer size
+ * pkb_rem(buf)              : return remaining read/write space in buffer
+ * pkb_pos(buf)              : return buffer read/write index
+ * pkb_inc(buf)              : increment buffer read/write index
+ * pkb_endz(buf)             : set buffer end to nul char if space
+ * pkb_mkspace(buf, len)     : return position pointer and increment if space else null
+ * pkb_printf(buf, fmt, ...) : printf fmt to buffer
  * -
  * pbb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
  * pbb_hdr_dec(hdr, buf, len) : decode pkt-header from buffer
  * pbb_msg_enc(msg, buf, len) : encode message to buffer
  * pbb_msg_dec(msg, buf, len) : decode message from buffer
  * -
- * pkt_buf_hdr_enc(buf, hdr)  : encode pkt-header to pkt buf
- * pkt_buf_hdr_dec(buf, hdr)  : decode pkt-header from pkt buf
- * pkt_buf_msg_enc(buf, msg)  : encode message to pkt buf
- * pkt_buf_msg_dec(buf, msg)  : decode message from pkt buff
+ * pkb_hdr_enc(buf, hdr)  : encode pkt-header to pkt buf
+ * pkb_hdr_dec(buf, hdr)  : decode pkt-header from pkt buf
+ * pkb_msg_enc(buf, msg)  : encode message to pkt buf
+ * pkb_msg_dec(buf, msg)  : decode message from pkt buff
  * -
  * pbb_str_toaddr(str, addr)  : string to IP address
  * pbb_addr_tostr(len, addr)  : IP adders to string
@@ -73,77 +75,76 @@ struct pkt_buf {
     uint8_t *end;
 };
 
-#define PKT_BUF_INIT(buf, len) { \
+#define PKB_INIT(buf, len) { \
     .data = (uint8_t *) (buf), \
     .ptr  = (uint8_t *) (buf), \
     .end  = (uint8_t *) (buf) + (len) \
 }
 
-static inline void pkt_buf_init(struct pkt_buf *buf, void *data, size_t len)
+static inline void pkb_init(struct pkt_buf *pkb, void *data, size_t len)
 {
-    buf->data = data;
-    buf->ptr  = data;
-    buf->end  = buf->ptr + len;
+    pkb->data = data;
+    pkb->ptr  = data;
+    pkb->end  = pkb->ptr + len;
 }
 
-
-static inline void *pkt_buf_start(struct pkt_buf *buf)
+static inline void *pkb_start(struct pkt_buf *pkb)
 {
-    return buf->data;
+    return pkb->data;
 }
 
-static inline void *pkt_buf_ptr(struct pkt_buf *buf)
+static inline void *pkb_ptr(struct pkt_buf *pkb)
 {
-    return buf->ptr;
+    return pkb->ptr;
 }
 
-static inline void pkt_buf_reset(struct pkt_buf *buf)
+static inline void pkb_reset(struct pkt_buf *pkb)
 {
-    buf->ptr = buf->data;
+    pkb->ptr = pkb->data;
 }
 
-static inline bool pkt_buf_end(struct pkt_buf *buf)
+static inline bool pkb_end(struct pkt_buf *pkb)
 {
-    return buf->ptr >= buf->end;
+    return pkb->ptr >= pkb->end;
 }
 
-static inline size_t pkt_buf_len(struct pkt_buf *buf)
+static inline size_t pkb_len(struct pkt_buf *pkb)
 {
-    return buf->end - buf->data;
+    return pkb->end - pkb->data;
 }
 
-static inline size_t pkt_buf_pos(struct pkt_buf *buf)
+static inline size_t pkb_pos(struct pkt_buf *pkb)
 {
-    return buf->ptr - buf->data;
+    return pkb->ptr - pkb->data;
 }
 
-static inline size_t pkt_buf_rem(struct pkt_buf *buf)
+static inline size_t pkb_rem(struct pkt_buf *pkb)
 {
-    return buf->end - buf->ptr;
+    return pkb->end - pkb->ptr;
 }
 
-static inline void pkt_buf_inc(struct pkt_buf *buf, size_t len)
+static inline void pkb_inc(struct pkt_buf *pkb, size_t len)
 {
-    if (len > pkt_buf_rem(buf)) return;
-    buf->ptr += len;
+    if (len > pkb_rem(pkb)) return;
+    pkb->ptr += len;
 }
 
-static inline void pkt_buf_endz(struct pkt_buf *buf)
+static inline void pkb_endz(struct pkt_buf *pkb)
 {
-    if (buf->ptr < buf->end) *buf->ptr = '\0';
+    if (pkb->ptr < pkb->end) *pkb->ptr = '\0';
 }
 
-static inline void *pkt_buf_mkspace(struct pkt_buf *buf, size_t len)
+static inline void *pkb_mkspace(struct pkt_buf *pkb, size_t len)
 {
-    if (len > pkt_buf_rem(buf)) return NULL;
+    if (len > pkb_rem(pkb)) return NULL;
 
-    void *ptr = buf->ptr;
-    buf->ptr += len;
+    void *ptr = pkb->ptr;
+    pkb->ptr += len;
 
     return ptr;
 }
 
-size_t pkt_buf_printf(struct pkt_buf *buf, const char *fmt, ...)
+size_t pkb_printf(struct pkt_buf *pkb, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
 // 5.3 <addr-flags> 8-bit field - network order (i.e MSB is bit 0)
@@ -408,11 +409,11 @@ ssize_t pbb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len);
 ssize_t pbb_msg_enc(struct pbb_msg *msg, void *mem, size_t len);
 ssize_t pbb_msg_dec(struct pbb_msg *msg, void *mem, size_t len);
 
-// pkt_buf encode/decode
-int pkt_buf_hdr_enc(struct pkt_buf *buf, struct pbb_hdr *hdr);
-int pkt_buf_hdr_dec(struct pkt_buf *buf, struct pbb_hdr *hdr);
-int pkt_buf_msg_enc(struct pkt_buf *buf, struct pbb_msg *msg);
-int pkt_buf_msg_dec(struct pkt_buf *buf, struct pbb_msg *msg);
+// packet buffer encode/decode
+int pkb_hdr_enc(struct pkt_buf *pkb, struct pbb_hdr *hdr);
+int pkb_hdr_dec(struct pkt_buf *pkb, struct pbb_hdr *hdr);
+int pkb_msg_enc(struct pkt_buf *pkb, struct pbb_msg *msg);
+int pkb_msg_dec(struct pkt_buf *pkb, struct pbb_msg *msg);
 
 const char *pbb_field_tostr(int field);
 size_t pbb_str_toaddr(const char *str, uint8_t addr[static 16]);

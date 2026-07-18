@@ -223,7 +223,7 @@ static int enc_pkt(struct pkt_buf *dst, const char *str)
         }
     }
 
-    return pkt_buf_hdr_enc(dst, &hdr);
+    return pkb_hdr_enc(dst, &hdr);
 }
 
 static int enc_node(struct pbb_msg *msg, struct pbb_node *mn, char *fn, char *fv)
@@ -359,7 +359,7 @@ static int enc_msg(struct pkt_buf *dst, const char *str)
     }
 
     // encode to dst buffer
-    return pkt_buf_msg_enc(dst, &msg);
+    return pkb_msg_enc(dst, &msg);
 }
 
 static int enc_msgs(struct pkt_buf *dst, int nmsg, char *msgs[static nmsg])
@@ -394,22 +394,22 @@ static int run_test(enum test_cmd cmd,
 
     switch(cmd) {
     case TEST_MSG_START:
-        pkt_buf_init(&buf, hexbuf, hex_len);
-        rc = pkt_buf_msg_dec(&buf, &msg);
+        pkb_init(&buf, hexbuf, hex_len);
+        rc = pkb_msg_dec(&buf, &msg);
         if (rc) rc = ERR_MSG;
         //log_debug("%.*s", pbb_msg_tostr(&msg, tmp, sizeof(tmp)), tmp);
         break;
     case TEST_PKT_END:
-        pkt_buf_init(&buf, hexbuf, hex_len);
-        rc = pkt_buf_hdr_dec(&buf, &hdr);
+        pkb_init(&buf, hexbuf, hex_len);
+        rc = pkb_hdr_dec(&buf, &hdr);
         if (rc) return ERR_PKT;
-        while (pkt_buf_rem(&buf)) {
-            rc = pkt_buf_msg_dec(&buf, &msg);
+        while (pkb_rem(&buf)) {
+            rc = pkb_msg_dec(&buf, &msg);
             if (rc) return ERR_MSG;
         }
         break;
     case TEST_ENC_END:
-        pkt_buf_init(&buf, msgbuf, sizeof(msgbuf));
+        pkb_init(&buf, msgbuf, sizeof(msgbuf));
         if (pkt) {
             rc = enc_pkt(&buf, pkt);
             if (rc) return ERR_ENC;
@@ -417,7 +417,7 @@ static int run_test(enum test_cmd cmd,
         rc = enc_msgs(&buf, nstr, strs);
         if (rc) return ERR_ENC;
         if (hex_len) {
-            rc = cmp_buf(msgbuf, pkt_buf_pos(&buf), hexbuf, hex_len);
+            rc = cmp_buf(msgbuf, pkb_pos(&buf), hexbuf, hex_len);
             if (rc) return ERR_ENC;
         }
         break;
@@ -432,7 +432,7 @@ static int run_test(enum test_cmd cmd,
 static char *store_str(struct pkt_buf *buf, const char *str)
 {
     size_t len = strlen(str);
-    char *nstr = pkt_buf_mkspace(buf, len  + 1);
+    char *nstr = pkb_mkspace(buf, len  + 1);
 
     if (nstr) {
         memcpy(nstr, str, len);
@@ -445,7 +445,7 @@ static char *store_str(struct pkt_buf *buf, const char *str)
 static char *store_hex(struct pkt_buf *buf, const char *str)
 {
     size_t len = strlen(str);
-    char *nstr = pkt_buf_mkspace(buf, len +  1);
+    char *nstr = pkb_mkspace(buf, len +  1);
 
     if (nstr) {
         memcpy(nstr, str, len);
@@ -471,8 +471,8 @@ static int test_file(const char *file)
     char *msgs[10];
     size_t nmsg = 0;
 
-    struct pkt_buf strs = PKT_BUF_INIT(sbuf, sizeof(sbuf));
-    struct pkt_buf hex  = PKT_BUF_INIT(hbuf, sizeof(hbuf));
+    struct pkt_buf strs = PKB_INIT(sbuf, sizeof(sbuf));
+    struct pkt_buf hex  = PKB_INIT(hbuf, sizeof(hbuf));
 
     FILE *f = fopen(file, "r");
     if (f == NULL) return -1;
@@ -498,9 +498,9 @@ static int test_file(const char *file)
             line = trim(line + 1);
             // new-test
             testno++;
-            pkt_buf_reset(&strs);
-            pkt_buf_reset(&hex);
-            pkt_buf_endz(&hex);
+            pkb_reset(&strs);
+            pkb_reset(&hex);
+            pkb_endz(&hex);
             desc = store_str(&strs, line);
             if (!desc) {
                 rc = log_error_rf("line %d store desc failed %s", lineno, line);
@@ -614,7 +614,7 @@ static int test_file(const char *file)
         if (rc) break;
         if (state != 4) continue;
 
-        rc = run_test(cmd, pkt_buf_start(&hex), pkt, nmsg, msgs);
+        rc = run_test(cmd, pkb_start(&hex), pkt, nmsg, msgs);
         char *pass = rc == 0 ? "PASS" : "FAIL";
         fprintf(stderr, "test %d [%s] %s\n", testno, pass, desc);
         if (rc) num_fail++;
