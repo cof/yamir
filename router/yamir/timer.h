@@ -7,7 +7,8 @@
  *
  * Design
  * ------
- * - malloc-free - No dynamic memory allocation for timer state
+ * - malloc-free - No dynamic memory allocation
+ * - cache-locality - Small fixed size arrays 
  * - Intrusive-design: structures allow for inline embedding and object composition
  * - Monotonic Precision: uses CLOCK_MONOTONIC for ms-accurate clock-shift proof time-keeping
  * - timers are stored in in fixed size array of slots
