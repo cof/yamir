@@ -152,7 +152,7 @@ struct dymo_req {
    	uint32_t addr;
    	int ifindex;
    	int timer;
-   	time_t wait_time;
+   	uint32_t wait_time;
    	int tries;
    	uint16_t seqnum;
    	int8_t hop_count;
@@ -1229,7 +1229,7 @@ static int dymo_send_request(struct yamir_state *ys, struct dymo_req *req)
 // send out request for route
 static int dymo_out_req(struct dymo_req *req)
 {
-    log_debug("%s attempt %d/%d wait %ld",
+    log_debug("%s attempt %d/%d wait %u",
         addr_tostr(req->addr),
         req->tries,
         DISCOVERY_ATTEMPTS_MAX,

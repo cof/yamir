@@ -8,8 +8,8 @@
  * Notes
  * ------
  * Uses a minimum binary heap aka priortity queue
- * Based on the classc barkley and lee usenix 88 paper
  * A Heap-Based Callout Implementation to Meet Real-Time Needs
+ * Based on the classc barkley and lee usenix 88 paper
 */
 #include <stdint.h>
 #include <stdbool.h>
@@ -18,18 +18,29 @@
 #include "log.h"
 #include "timer.h"
 
-#define swap(x,y) do { \
-    __typeof__(x) _tmp = (x); \
-    (x) = (y); \
-    (y) = _tmp; \
-} while(0)
 
-static bool timer_greater(struct timer_mgr *tm, int t1, int t2)
+static inline void heap_swap(struct timer_mgr *tm, int pos1, int pos2)
 {
-    struct timer_slot *ts1 = &tm->slot[t1];
-    struct timer_slot *ts2 = &tm->slot[t2];
+    int idx1 = tm->heap[pos1];
+    int idx2 = tm->heap[pos2];
 
-    return ts1->expiry > ts2->expiry;
+    // swap positions
+    tm->heap[pos1] = idx2;
+    tm->heap[pos2] = idx1;
+
+    // update slots
+    tm->slot[idx1].hpos = pos2;
+    tm->slot[idx2].hpos = pos1;
+}
+
+static inline bool timer_greater(struct timer_mgr *tm, int idx1, int idx2)
+{
+    return tm->slot[idx1].expiry > tm->slot[idx2].expiry;
+}
+
+static inline bool heap_greater(struct timer_mgr *tm, int pos1, int pos2)
+{
+    return timer_greater(tm, tm->heap[pos1], tm->heap[pos2]);
 }
 
 //  sift up or swim
@@ -39,8 +50,8 @@ static void minheap_siftup(struct timer_mgr *tm, int idx)
 
     int parent = (idx - 1) / 2;
 
-    while (idx > 0 && timer_greater(tm, tm->heap[parent], tm->heap[idx])) {
-        swap(tm->heap[parent], tm->heap[idx]);
+    while (idx > 0 && heap_greater(tm, parent, idx)) {
+        heap_swap(tm, parent, idx);
         idx = parent;
         parent = (idx - 1) / 2;
     }
@@ -57,11 +68,11 @@ static void minheap_siftdown(struct timer_mgr *tm, int idx)
     while (idx == child && idx <= (tm->num_timer - 2) / 2) {
         // choose lesser left|right child
         child = 2 * idx + 1;
-        if (child + 1 < tm->num_timer && timer_greater(tm, tm->heap[child], tm->heap[child+1])) {
+        if (child + 1 < tm->num_timer && heap_greater(tm, child, child + 1)) {
             child++;
         }
-        if (timer_greater(tm, tm->heap[idx], tm->heap[child])) {
-            swap(tm->heap[child], tm->heap[idx]);
+        if (heap_greater(tm, idx, child)) {
+            heap_swap(tm, child, idx);
             idx = child;
         }
     }
@@ -73,7 +84,7 @@ static void slot_release(struct timer_mgr *tm, struct timer_slot *ts)
 
     log_debug("tid=%d ntimer=%d", tm->num_timer, tid);
 
-    ts->hidx = tm->free_head;
+    ts->hpos = tm->free_head;
     ts->flags = 0;
     ts->cb = NULL;
     ts->arg = NULL;
@@ -86,7 +97,7 @@ static int get_free_slot(struct timer_mgr *tm)
     int tid = tm->free_head;
 
     if (tid != -1) {
-        tm->free_head = tm->slot[tid].hidx;
+        tm->free_head = tm->slot[tid].hpos;
     }
 
     return tid;
@@ -125,10 +136,10 @@ int timer_init(struct timer_mgr *tm)
     tm->free_head = 0;
 
     for (int i= 0; i < TIMER_MAXSLOT - 1; i++) {
-        tm->slot[i].hidx = i + 1;
+        tm->slot[i].hpos = i + 1;
     }
 
-    tm->slot[TIMER_MAXSLOT - 1].hidx = -1;
+    tm->slot[TIMER_MAXSLOT - 1].hpos = -1;
 
     return 0;
 }
@@ -176,9 +187,9 @@ int timer_check(struct timer_mgr *tm)
     return next_ms;
 }
 
-int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *arg)
+int timer_add(struct timer_mgr *tm, uint32_t delay_ms, void (*cb)(void *arg), void *arg)
 {
-    log_debug("ms=%lu cb=%p arg=%p ntimer=%d", ms, cb, arg, tm->num_timer);
+    log_debug("delay=%u cb=%p arg=%p ntimer=%d", delay_ms, cb, arg, tm->num_timer);
 
     int tid = get_free_slot(tm);
     if (tid == -1) return -1;
@@ -186,8 +197,8 @@ int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *ar
     struct timer_slot *ts = &tm->slot[tid];
     uint64_t now_ms = get_now_ms();
 
-    ts->expiry = now_ms + ms;
-    ts->hidx   = tm->num_timer;
+    ts->expiry = now_ms + delay_ms;
+    ts->hpos   = tm->num_timer;
     ts->flags  = TSF_ACTIVE;
     ts->cb  = cb;
     ts->arg = arg;
@@ -195,8 +206,8 @@ int timer_add(struct timer_mgr *tm, uint64_t ms, void (*cb)(void *arg), void *ar
     tm->heap[tm->num_timer++] = tid;
     minheap_siftup(tm, tm->num_timer - 1);
 
-    log_debug("tid=%d now_ms=%lu expiry=%lu hidx=%u ntimer=%d", 
-        tid, now_ms, ts->expiry, ts->hidx, tm->num_timer);
+    log_debug("tid=%d now_ms=%lu expiry=%lu hpos=%u ntimer=%d", 
+        tid, now_ms, ts->expiry, ts->hpos, tm->num_timer);
 
     return tid;
 }
@@ -208,18 +219,18 @@ void timer_cancel(struct timer_mgr *tm, int tid)
     if (tid < 0 || tid >= TIMER_MAXSLOT) return;
 
     struct timer_slot *ts = &tm->slot[tid];
-    int hidx = ts->hidx;
-    if (hidx < 0) return;
+    int hpos = ts->hpos;
+    if (hpos < 0) return;
 
-    int last_hidx = --tm->num_timer;
+    int last_hpos = --tm->num_timer;
 
-    if (hidx != last_hidx) {
-        swap(tm->heap[hidx], tm->heap[last_hidx]);
-        if (timer_greater(tm, hidx, last_hidx)) {
-            minheap_siftdown(tm, hidx);
+    if (hpos != last_hpos) {
+        heap_swap(tm, hpos, last_hpos);
+        if (heap_greater(tm, hpos, last_hpos)) {
+            minheap_siftdown(tm, hpos);
         }
         else {
-            minheap_siftup(tm, hidx);
+            minheap_siftup(tm, hpos);
         }
     }
 
