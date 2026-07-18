@@ -818,9 +818,10 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
         ab->mid_len = ab->addr_len;
         ab->head = mn->addr;
     }
+    else if (!compat_prefix(ab, mn)) {
+        return false;
+    }
     else {
-        if (!compat_prefix(ab, mn)) return false;
-
         // find common prefix (head)
         int head_len = ab->head_len;
         while (head_len > 0) {
@@ -840,6 +841,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
             tail_len = ab->addr_len - head_len - 1;
         }
 
+        // check if current head/tail can fit new head/tail
         if ((ab->head_len || ab->tail_len) && (!head_len && !tail_len)) return false;
         if ((ab->head_len + ab->tail_len) - (head_len + tail_len) > 1)  return false;
 
