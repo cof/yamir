@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT | (c) 2026 [cof]
+# 
 # ======================
 # VM Provisioning Module
 # ======================
@@ -269,7 +271,8 @@ vm-list:
 	$(Q)virsh -q dominfo $(VM_NAME)   2>/dev/null || echo " => VM not found"
 	$(Q)virsh -q domifaddr $(VM_NAME) 2>/dev/null || true
 
+.PHONY: vm-clean
 vm-clean:
 	 virsh -q destroy $(VM_NAME) || true
 	 virsh -q undefine $(VM_NAME) || true || true
-	 rm -rf $(VM_DIR) $(VM_DONE) $(VM_USER_DATA)
+	 rm -rf $(VM_DIR) $(VM_DONE) $(VM_USER_DATA) $(VM_META_DATA)
