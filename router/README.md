@@ -65,7 +65,7 @@ This will build and install the VM as follows
 
 - creates the `test-yamir` VM based based on Alpine Linux 
 - copies kyamir source, yamird and create_manet.sh to VM /home/alpine
-- build kyamird kernel module for VM
+- build kyamir kernel module for VM
 - run setcap on yamird for VM
 - ssh to VM as alpine@test-yamir
 
