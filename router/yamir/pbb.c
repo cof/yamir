@@ -122,7 +122,7 @@ static uint8_t *dec_next(struct pkt_buf *pkb, size_t len, enum pbb_field field)
     return ptr;
 }
 
-static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
+static int load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
 {
     int idx_end = ab->num_addr - 1;
 
@@ -147,10 +147,15 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
         break;
     }
 
+    // check for valid index range
+    if (idx_start > idx_stop  || idx_stop >= ab->num_addr) {
+        return -1;
+    }
+
     int single_len = 0;
     if (tlv->flags & TLVF_VALUE) {
         int num_val = idx_stop - idx_start + 1;
-        single_len = (tlv->flags & TLVF_MULTIVALUE) != 0
+        single_len = tlv->flags & TLVF_MULTIVALUE
             ? tlv->vlen / num_val
             : tlv->vlen;
     }
@@ -181,6 +186,9 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
             break;
         }
     }
+
+    // node updated
+    return 0;
 }
 
 static int dec_pbb_tlv(struct pkt_buf *pkb, struct pbb_tlv *tlv)
@@ -265,7 +273,9 @@ static int dec_addr_tlvs(struct pkt_buf *pkb, struct pbb_ab *ab)
 
     while (pkb_rem(&tlv_buf))  {
         if (dec_pbb_tlv(&tlv_buf, &tlv)) return -1;
-        load_node_tlv(ab, &tlv);
+        if (load_node_tlv(ab, &tlv)) {
+            return dec_err(&tlv_buf, 0, PBB_TLVBLK_TLVS);
+        }
     }
 
     return 0;
