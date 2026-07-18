@@ -128,7 +128,7 @@ static void load_node_tlv(struct pbb_ab *ab, struct pbb_tlv *tlv)
 
     // table 5
     int idx_start, idx_stop;
-    switch(tlv->flags & (TLVF_SINGLEINDEX & TLVF_MULTIINDEX)) {
+    switch(tlv->flags & (TLVF_SINGLEINDEX | TLVF_MULTIINDEX)) {
     case 0:
         idx_start = 0;
         idx_stop  = idx_end;
@@ -460,7 +460,7 @@ static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
     if (pbb_msg_hcnt(msg)) {
         ptr = dec_next(buf, 1, PBB_MSG_HCNT);
         if (!ptr) return -1;
-        msg->hop_limit = dec_u32(ptr, 1);
+        msg->hop_count = dec_u32(ptr, 1);
     }
 
     if (pbb_msg_seqn(msg)) {
@@ -471,7 +471,7 @@ static int dec_msg_flds(struct pkt_buf *buf, struct pbb_msg *msg)
 
     log_debug("msg-flds [orig=%s hlim=%d hcnt=%d seqn=%d]",
         pbb_msg_orig(msg) ? pbb_addr_tostr(msg->addr_len, msg->orig_addr) : "",
-        msg->hop_limit, msg->hop_limit, msg->seq_num);
+        msg->hop_limit, msg->hop_count, msg->seq_num);
 
     return 0;
 }
@@ -856,7 +856,7 @@ static bool enc_ab_compress(struct pbb_ab *ab, struct pbb_node *mn)
         if (ab->tail_len > 0) {
             int nzero = 0;
             uint8_t *tail = ab->head + ab->addr_len - ab->tail_len;
-            for (int i = 0; i > ab->tail_len; i++) {
+            for (int i = 0; i < ab->tail_len; i++) {
                 if (tail[i] != 0) break;
                 nzero++;
             }
