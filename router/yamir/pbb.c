@@ -1016,7 +1016,7 @@ struct pbb_node *pbb_copy_node(struct pbb_msg *msg, const struct pbb_node *src)
 }
 
 // encode MANET pkt-header
-ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len)
+ssize_t pbb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len)
 {
     struct pkt_buf buf = PKT_BUF_INIT(mem, len);
 
@@ -1026,7 +1026,7 @@ ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len)
     return pkt_buf_pos(&buf);
 }
 
-ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len)
+ssize_t pbb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len)
 {
     struct pkt_buf buf = PKT_BUF_INIT(mem, len);
 

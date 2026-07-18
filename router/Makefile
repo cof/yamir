@@ -34,6 +34,7 @@ YAMIR_CFLAGS := -Wall \
 	-Werror=discarded-qualifiers \
 	-Werror=shadow=compatible-local \
 	-Werror=implicit-function-declaration \
+	-Werror=missing-prototypes \
 	$(CPP_FLAGS) $(GCC_DEPS)
 
 DEBUG_CFLAGS := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1

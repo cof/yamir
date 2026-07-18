@@ -35,8 +35,8 @@
  * pkt_buf_mkspace(buf, len)     : return position pointer and increment if space else null
  * pkt_buf_printf(buf, fmt, ...) : printf fmt to buffer
  * -
- * ppb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
- * ppb_hdr_dec(hdr, buf, len) : decode pkt-header from buffer
+ * pbb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
+ * pbb_hdr_dec(hdr, buf, len) : decode pkt-header from buffer
  * pbb_msg_enc(msg, buf, len) : encode message to buffer
  * pbb_msg_dec(msg, buf, len) : decode message from buffer
  * -
@@ -56,7 +56,7 @@
  * rfc5444 - Generalized Mobile Ad Hoc Network (MANET) Packet/Message Format
  */
 #ifndef _PBB_H_
-#define _PPB_H_
+#define _PBB_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -64,7 +64,7 @@
 #define PBB_HDR_MAXTLV  16
 #define PBB_MSG_MAXTLV  8
 #define PBB_MSG_MAXNODE 32
-#define PPB_MAX_ADDRLEN 4 // TODO support IPv6
+#define PBB_MAX_ADDRLEN 4 // TODO support IPv6
 
 // pkt buffer
 struct pkt_buf {
@@ -403,8 +403,8 @@ struct pbb_node *pbb_add_node(struct pbb_msg *msg);
 struct pbb_node *pbb_copy_node(struct pbb_msg *msg, const struct pbb_node *src);
 
 // mem encode/decode
-ssize_t ppb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len);
-ssize_t ppb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len);
+ssize_t pbb_hdr_enc(struct pbb_hdr *hdr, void *mem, size_t len);
+ssize_t pbb_hdr_dec(struct pbb_hdr *hdr, void *mem, size_t len);
 ssize_t pbb_msg_enc(struct pbb_msg *msg, void *mem, size_t len);
 ssize_t pbb_msg_dec(struct pbb_msg *msg, void *mem, size_t len);
 
