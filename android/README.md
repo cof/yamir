@@ -24,8 +24,7 @@ This contains the following scripts and binaries
 - iwconfig to enable Ad-hoc mode (from wireless-tools) 
 - killall (from psmisc)
 
-Note the app needs a complied kyamir and shell script for each Android device.  
-This is because the kernel and insmod method to control the Wi-Fi interface differ.
+The app needs a kyamir kernel module and shell script for each Android device because kernel versions and Wi-Fi configurations vary.
 
 The iwconfig and killall are needed as these are not standard on android handsets. 
 
