@@ -3,10 +3,14 @@
 /*
  * A simple timer API
  * ------------------
- * Timer code uses a fixed-size min-heap callout queue.
- * See timer.h for API documentation
  *
-*/
+ * Implementation:
+ * - Fixed-size min-heap callout queue.
+ * - Embedded LIFO freelist for timer slot allocation.
+ *
+ * See timer.h for API documentation.
+ *
+ */
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
@@ -129,6 +133,8 @@ int timer_init(struct timer_mgr *tm)
 {
     log_debug("max_timer=%d" , TIMER_MAXSLOT);
 
+    tm->num_timer = 0;
+    tm->num_fire  = 0;
     tm->free_head = 0;
 
     for (int i= 0; i < TIMER_MAXSLOT - 1; i++) {
@@ -142,9 +148,10 @@ int timer_init(struct timer_mgr *tm)
 
 void timer_deinit(struct timer_mgr *tm)
 {
-    tm->num_timer = 0;
+    timer_deinit(tm);
 }
 
+// process expired timers, return next expiry 
 int timer_check(struct timer_mgr *tm)
 {
     tm->now_ms = get_now_ms();

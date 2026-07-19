@@ -23,7 +23,7 @@
  * timer_deinit(tm) : Reset timer state
  * timer_check(tm)  : process expired timers, return next expiry 
  * timer_add(tm, delay_ms, cb, arg) : add a timer; return timer ID (slot index)
- * timer_cancel(tm, tid)  : cancel a timer
+ * timer_cancel(tm, tid) : cancel a timer
  */
 #ifndef _TIMER_H_
 #define _TIMER_H_
@@ -41,13 +41,13 @@ struct timer_slot {
 #define TSF_ACTIVE  1
 
 struct timer_mgr {
-    uint64_t now_ms;
-    int num_timer;
-    int num_fire;
-    int free_head;  // head of inactive slot list
-    struct timer_slot slot[TIMER_MAXSLOT];
-    struct timer_slot fire[TIMER_MAXSLOT];
-    int heap[TIMER_MAXSLOT]; // Stores slot indexes
+    uint64_t now_ms;  // current montonic time
+    int num_timer;    // number of active timers
+    int num_fire;     // number of expired timers queued for callback
+    int free_head;    // head of free slot LIFO stack (-1 if full)
+    struct timer_slot slot[TIMER_MAXSLOT]; // timer storage pool
+    struct timer_slot fire[TIMER_MAXSLOT]; // expire timers pending callback
+    int heap[TIMER_MAXSLOT];  // min-heap of timer slot indices
 };
 
 int timer_init(struct timer_mgr *tm);

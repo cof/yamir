@@ -3,7 +3,7 @@
 /*
  * PBB - PacketBB codec for MANET packets
  * ----------------------------------
- * See pbb.h for API description.
+ * See pbb.h for API documentation.
  *
  * Refs
  * ----

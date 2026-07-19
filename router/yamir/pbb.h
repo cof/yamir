@@ -8,7 +8,7 @@
  * Design
  * ------
  * - No dynamic memory allocation (malloc-free) for deterministic performance.
- * - Intrusive-design: structures allow for inline embedding and object composition
+ * - Intrusive structures allow for inline embedding and object composition
  * - full rfc5444 support for encoding/decoding wire-format MANET packets/messages.
  * - Provides buffer, header and message structures for easy pkt generation.
  * - Supports address compression and expansion.
@@ -23,19 +23,19 @@
  *
  * API
  * ----
- * PKB_INIT(mem, len)        : macro to init buffer
- * pkb_init(buf, mem, len)   : init buffer with memory
- * pkb_start(buf)            : return buffer start pointer
- * pkb_ptr(buf)              : return buffer position pointer
- * pkb_reset(buf)            : reset buffer position pointer to start
- * pkb_end(bif)              : true if buffer pos at end
- * pkb_len(buf)              : return buffer size
- * pkb_rem(buf)              : return remaining read/write space in buffer
- * pkb_pos(buf)              : return buffer read/write index
- * pkb_inc(buf)              : increment buffer read/write index
- * pkb_endz(buf)             : set buffer end to nul char if space
- * pkb_mkspace(buf, len)     : return position pointer and increment if space else null
- * pkb_printf(buf, fmt, ...) : printf fmt to buffer
+ * PKB_INIT(mem, len)        : macro to initialize packet buffer structure
+ * pkb_init(pkb, mem, len)   : Initialize packet buffer with memory block
+ * pkb_start(pkb)            : return start of packet buffer
+ * pkb_ptr(pkb)              : return current position of packet buffer
+ * pkb_reset(pkb)            : reset current packet buffer position to start
+ * pkb_end(pkb)              : return true if current postion at end
+ * pkb_len(pkb)              : return packet buffer size
+ * pkb_rem(pkb)              : return space remaining in buffer
+ * pkb_pos(pkb)              : return current offset from buffer start
+ * pkb_inc(pkb)              : increment buffer read/write index
+ * pkb_endz(pkb)             : set last byte of packet buffer to nul char if space
+ * pkb_mkspace(pkb, len)     : return position pointer and increment if space else null
+ * pkb_printf(pkb, fmt, ...) : printf fmt-str to packet buffer
  * -
  * pbb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
  * pbb_hdr_dec(hdr, buf, len) : decode pkt-header from buffer
@@ -68,29 +68,29 @@
 #define PBB_MSG_MAXNODE 32
 #define PBB_MAX_ADDRLEN 4 // TODO support IPv6
 
-// pkt buffer
+// packet buffer
 struct pkt_buf {
-    uint8_t *data;
-    uint8_t *ptr;
-    uint8_t *end;
+    uint8_t *buf; // buffer start
+    uint8_t *ptr; // current position
+    uint8_t *end; // buffer end
 };
 
-#define PKB_INIT(buf, len) { \
-    .data = (uint8_t *) (buf), \
-    .ptr  = (uint8_t *) (buf), \
-    .end  = (uint8_t *) (buf) + (len) \
+#define PKB_INIT(_buf, _len) { \
+    .buf = (uint8_t *) (_buf), \
+    .ptr  = (uint8_t *) (_buf), \
+    .end  = (uint8_t *) (_buf) + (_len) \
 }
 
-static inline void pkb_init(struct pkt_buf *pkb, void *data, size_t len)
+static inline void pkb_init(struct pkt_buf *pkb, void *buf, size_t len)
 {
-    pkb->data = data;
-    pkb->ptr  = data;
+    pkb->buf = buf;
+    pkb->ptr  = buf;
     pkb->end  = pkb->ptr + len;
 }
 
 static inline void *pkb_start(struct pkt_buf *pkb)
 {
-    return pkb->data;
+    return pkb->buf;
 }
 
 static inline void *pkb_ptr(struct pkt_buf *pkb)
@@ -100,7 +100,7 @@ static inline void *pkb_ptr(struct pkt_buf *pkb)
 
 static inline void pkb_reset(struct pkt_buf *pkb)
 {
-    pkb->ptr = pkb->data;
+    pkb->ptr = pkb->buf;
 }
 
 static inline bool pkb_end(struct pkt_buf *pkb)
@@ -110,12 +110,12 @@ static inline bool pkb_end(struct pkt_buf *pkb)
 
 static inline size_t pkb_len(struct pkt_buf *pkb)
 {
-    return pkb->end - pkb->data;
+    return pkb->end - pkb->buf;
 }
 
 static inline size_t pkb_pos(struct pkt_buf *pkb)
 {
-    return pkb->ptr - pkb->data;
+    return pkb->ptr - pkb->buf;
 }
 
 static inline size_t pkb_rem(struct pkt_buf *pkb)
