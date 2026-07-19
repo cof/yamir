@@ -34,7 +34,7 @@
  * pkb_pos(pkb)              : return current offset from buffer start
  * pkb_inc(pkb)              : increment buffer read/write index
  * pkb_endz(pkb)             : set last byte of packet buffer to nul char if space
- * pkb_mkspace(pkb, len)     : return position pointer and increment if space else null
+ * pkb_mkspace(pkb, len)     : reserve space for len bytes (returns NULL if full)
  * pkb_printf(pkb, fmt, ...) : printf fmt-str to packet buffer
  * -
  * pbb_hdr_enc(hdr, buf, len) : encode pkt-header to buffer
