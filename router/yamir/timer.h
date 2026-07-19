@@ -3,26 +3,27 @@
 /*
  * timer
  * -----
- * A simple min-heap based timer API
+ * A simple timer API based on the based on the Barkley and Lee usenix 88 paper
+ * "A Heap-Based Callout Implementation to Meet Real-Time Needs."
  *
  * Design
  * ------
- * - malloc-free - No dynamic memory allocation
- * - cache-locality - Small fixed size arrays 
- * - Intrusive-design: structures allow for inline embedding and object composition
- * - Monotonic Precision: uses CLOCK_MONOTONIC for ms-accurate clock-shift proof time-keeping
- * - timers are stored in in fixed size array of slots
- * - slot indexes are store inside heap instead of pointers
- * - timer_add has max delay of 49 days and returns the slot index of timer slot
- * - timer_check: calcs next deadline for poll/select driven I/O timeouts.
+ * - Memory allocation: No dynamic memory allocation
+ * - Cache-locality: Uses small fixed size arrays 
+ * - Intrusive structure:  Timer manager state can be embedded directly in application state.
+ * - Timekeeping: uses CLOCK_MONOTONIC for millisecond-accurate timing.
+ * - Storage Model: Timers are kept in in a fixed size array of slots.
+ * - Heap Structure: A binary min-heap stores slot indices rather than pointers.
+ * - Constraints: Maximum timeout is capped at 49 days (uint32_t millisecond wrap).
+ * - I/O Integration: Expiry calculations optimized for poll-driven event loops.
  *
  * API
  * ---
- * timer_init(tm)   : init timer state
- * timer_deinit(tm) : deinit timer state
- * timer_check(tm) : process timers, return next_expiry 
- * timer_add(tm, delay_ms, cb, arg) : add timer, return tid (slot index)
- * timer_cancel(tm, tid)  : cancel timer
+ * timer_init(tm)   : Initialize timer state
+ * timer_deinit(tm) : Reset timer state
+ * timer_check(tm)  : process expired timers, return next expiry 
+ * timer_add(tm, delay_ms, cb, arg) : add a timer; return timer ID (slot index)
+ * timer_cancel(tm, tid)  : cancel a timer
  */
 #ifndef _TIMER_H_
 #define _TIMER_H_
@@ -43,10 +44,10 @@ struct timer_mgr {
     uint64_t now_ms;
     int num_timer;
     int num_fire;
-    int free_head;
+    int free_head;  // head of inactive slot list
     struct timer_slot slot[TIMER_MAXSLOT];
     struct timer_slot fire[TIMER_MAXSLOT];
-    int heap[TIMER_MAXSLOT]; // stores slot indexes
+    int heap[TIMER_MAXSLOT]; // Stores slot indexes
 };
 
 int timer_init(struct timer_mgr *tm);

@@ -3,13 +3,9 @@
 /*
  * A simple timer API
  * ------------------
- * See timer.h for API description.
+ * Timer code uses a fixed-size min-heap callout queue.
+ * See timer.h for API documentation
  *
- * Notes
- * ------
- * Uses a minimum binary heap aka priortity queue
- * A Heap-Based Callout Implementation to Meet Real-Time Needs
- * Based on the classc barkley and lee usenix 88 paper
 */
 #include <stdint.h>
 #include <stdbool.h>
