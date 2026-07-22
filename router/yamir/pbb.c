@@ -94,13 +94,14 @@ static void pbb_ab_reset(struct pbb_ab *ab)
 
 /* decoders */
 
+// FIXME replace with with explict dec_u8, dec_u16, dec_u24, dec_u32 variants
 static inline uint32_t dec_u32(const uint8_t *ptr, int size)
 {
     switch(size) {
-    case 1: return ptr[0];
-    case 2: return ptr[0] << 8 | ptr[1];
-    case 3: return ptr[0] << 16 | ptr[1] << 8 | ptr[2];
-    case 4: return ptr[0] << 24 | ptr[1] << 16 | ptr[2] << 8 | ptr[3];
+    case 1: return (uint32_t) ptr[0];
+    case 2: return (uint32_t) ptr[0] << 8 | (uint32_t) ptr[1];
+    case 3: return (uint32_t) ptr[0] << 16 | (uint32_t) ptr[1] << 8 | (uint32_t) ptr[2];
+    case 4: return (uint32_t) ptr[0] << 24 | (uint32_t) ptr[1] << 16 | (uint32_t) ptr[2] << 8 | (uint32_t) ptr[3];
     default: return 0;
     }
 }
