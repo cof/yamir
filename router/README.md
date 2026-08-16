@@ -48,11 +48,14 @@ kyamir uses
 
 yamird uses
 
+- draft-ietf-manet-dymo-21 (DYMO) routing protocol implementation
 - PacketBB API codec with full address compression support
 - Timer API with ms resolution for DYMO timeouts
 - levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
 - poll driven I/O
-
+- rtnetlink, generic netlink and UDP sockets
+- sendto and sendmsg for pdu transmission
+- recvmmsg for batched reads with IP_PKTINFO info
 
 ## Testing
 
