@@ -444,10 +444,6 @@ static unsigned int do_kyamir_nf(struct net *net,
     int hook,
     void *okfn)
 {
-    int rc = NF_ACCEPT;
-    struct kyamir_state *ks;
-    struct yamir_msg msg;
-
     pr_debug("kyamir: nf-hook netid=%d nsid=%u hook=%d/%s in=%d out=%d\n",
         kyamir_netid, net->ns.inum,
         hook, hook_tostr(hook),
@@ -455,11 +451,12 @@ static unsigned int do_kyamir_nf(struct net *net,
         out ? out->ifindex : -1);
 
     // accept if not skb
+    int rc = NF_ACCEPT;
     if (kyamir_exiting) return rc;
     if (!skb) return rc;
 
     // accept if state not found
-    ks = net_generic(net, kyamir_netid);
+    struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks) return rc;
 
     pr_debug("kyamir: nf-hook netid=%d state: flags=0x%x pid=%d ifindex=%d\n",
@@ -494,6 +491,8 @@ static unsigned int do_kyamir_nf(struct net *net,
 
     pr_debug("kyamir: nf-hook netid=%d fire: saddr=%pI4 daddr=%pI4\n",
         kyamir_netid, &iph->saddr, &iph->daddr);
+
+    struct yamir_msg msg;
 
     switch(hook) {
     // incoming packets from net device to host, before routing
