@@ -67,7 +67,6 @@ static int kyamir_exiting = false;
 struct yamir_packet {
     struct list_head list;
     struct sk_buff   *skb;
-    struct net *net; // namespace pkt came from
     __be32 ip4_addr;
     unsigned long ts_added;
 };
@@ -112,10 +111,10 @@ static bool route_exists(struct kyamir_state *ks, struct net *net, __be32 saddr,
         .flowi4_tos = 0,
         .flowi4_oif = ks->ifindex,
     };
-	struct fib_result res;
+    struct fib_result res;
 
-	int rc = fib_lookup(net, &fl4, &res, 0);
-	if (rc) return false;
+    int rc = fib_lookup(net, &fl4, &res, 0);
+    if (rc) return false;
 
     // routable if fi exists and was installed by yamird
     return res.fi && res.fi->fib_protocol == YAMIR_RT_PROTO;
@@ -137,7 +136,6 @@ static void flush_packets(struct kyamir_state *ks)
 {
     pr_debug("kyamir: flush_packets ENTRY\n");
 
-    struct yamir_packet *yp, *tmp;
     LIST_HEAD(free_list);
 
     // move all packets to free list
@@ -147,20 +145,22 @@ static void flush_packets(struct kyamir_state *ks)
     spin_unlock_bh(&ks->packet_lock);
 
     // free them
-    list_for_each_entry_safe(yp, tmp, &free_list, list)  {
-        list_del(&yp->list);
-        if (yp->skb) kfree_skb(yp->skb);
-        kfree(yp);
+    struct yamir_packet *pos, *next;
+    list_for_each_entry_safe(pos, next, &free_list, list)  {
+        list_del(&pos->list);
+        if (pos->skb)
+            kfree_skb(pos->skb);
+        kfree(pos);
     }
 
     pr_debug("kyamir: flush_packets EXIT_\n");
 }
 
-static void drop_packets(struct list_head *packets)
+static void drop_packets(struct net *net, struct list_head *packets)
 {
     int num_drop = 0;
-
     struct yamir_packet *pos, *next;
+
     list_for_each_entry_safe(pos, next, packets, list) {
         struct sk_buff *skb = pos->skb;
         if (skb) {
@@ -171,8 +171,7 @@ static void drop_packets(struct list_head *packets)
             }
             else if (num_drop++ == 0) {
                 // remote peer
-                if (pos->net) 
-                    skb->dev = pos->net->loopback_dev;
+                skb->dev = net->loopback_dev;
                 skb_reset_network_header(pos->skb);
                 skb_set_transport_header(skb, ip_hdrlen(skb));
                 skb_dst_drop(skb);
@@ -200,7 +199,6 @@ static int queue_packet(struct kyamir_state *ks,
 
     // save packet data
     yp->skb = skb;
-    yp->net = net;
     yp->ip4_addr = addr;
     yp->ts_added = jiffies;
 
@@ -233,7 +231,7 @@ static int queue_packet(struct kyamir_state *ks,
 
 drop_unlock:
     spin_unlock_bh(&ks->packet_lock);
-    drop_packets(&drop_list);
+    drop_packets(net, &drop_list);
 
     return rc;
 }
@@ -242,9 +240,9 @@ static void drop_addr(struct kyamir_state *ks, struct net *net, uint32_t addr)
 {
     pr_debug("kyamir: drop_packets netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
+    // gather packets
     LIST_HEAD(drop_list);
 
-    // gather packets
     spin_lock_bh(&ks->packet_lock);
     struct yamir_packet *pos, *next;
     list_for_each_entry_safe(pos, next, &ks->packets, list) {
@@ -254,16 +252,17 @@ static void drop_addr(struct kyamir_state *ks, struct net *net, uint32_t addr)
         }
     }
     spin_unlock_bh(&ks->packet_lock);
-    drop_packets(&drop_list);
+
+    drop_packets(net, &drop_list);
 }
 
 static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
 {
     pr_debug("kyamir: send_addr netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
+    // gather packets
     LIST_HEAD(send_list);
 
-    // gather packets for addr
     spin_lock_bh(&ks->packet_lock);
     struct yamir_packet *pos, *next;
     list_for_each_entry_safe(pos, next, &ks->packets, list) {
@@ -277,10 +276,10 @@ static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
     list_for_each_entry_safe(pos, next, &send_list, list) {
         struct sk_buff *skb = pos->skb;
         if (skb) {
-            int rc = kyamir_ip_route_me_harder(pos->net, skb, RTN_LOCAL);
+            int rc = kyamir_ip_route_me_harder(net, skb, RTN_LOCAL);
             if (rc == 0) {
                 // Reinject packet into stack
-                ip_local_out(pos->net, skb->sk, skb);
+                ip_local_out(net, skb->sk, skb);
             }
             else {
                 kfree_skb(skb);
@@ -295,10 +294,10 @@ static int yamir_recv_msg(struct kyamir_state *ks,
     struct net *net, int pid,
     int cmd, struct yamir_msg *msg)
 {
+    int rc = 0;
+
     pr_debug("kyamir: yamir_recv_msg pid=%d cmd=%d msg(addr=%pI4 ifindex=%d)\n",
         pid, cmd, &msg->ip4_addr, msg->ifindex);
-
-    int rc = 0;
 
     switch(cmd) {
     case YAMIR_RT_REG:
