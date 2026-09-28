@@ -8,6 +8,7 @@ YAMIRD=$RUN_DIR/yamird
 
 # config
 IFNAME=wlan0
+MAX_QLEN=1024
 BRIDGE=mac-wlan0
 NS1=yamir1
 NS2=yamir2
@@ -41,7 +42,7 @@ start()
     ip netns exec $NS2 ip link set $IFNAME up
 
     # load kernel module
-    insmod $KYAMIR ifname=$IFNAME
+    insmod $KYAMIR ifname=$IFNAME max_qlen=$MAX_QLEN
 
     # launch userspace
     ip netns exec $NS1 $YAMIRD -d -i $IFNAME -f /var/log/$NS1.log -l $LOG_LEVEL

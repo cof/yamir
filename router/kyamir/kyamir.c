@@ -59,11 +59,9 @@ static int kyamir_netid; // namespace id
 static int kyamir_exiting = false;
 
 /* linux kernel ./net/ipv4/netfilter/ip_queue.c
-   TODO 
-   - add module parameters + provide proc view
-   - timeout packet sitting in queue ?
+ * Note packet timeouts are handled by dymo userspace
  */
-#define QUEUE_MAX_LEN 1024
+#define KYAMIR_MAX_QLEN 1024
 
 // packets queue waiting
 struct yamir_packet {
@@ -96,9 +94,15 @@ struct kyamir_state {
     __be32 addr_mask;
 };
 
+// module parameters
 static char *ifname = "wlan0";
+static unsigned int max_qlen = KYAMIR_MAX_QLEN;
+
 module_param(ifname, charp, 0444);
+module_param(max_qlen, uint, 0444);
+
 MODULE_PARM_DESC(ifname, "Interface name to intercept (e.g. wlan0)");
+MODULE_PARM_DESC(max_qlen, "Maximum packets queued waiting for a route");
 
 static bool route_exists(struct kyamir_state *ks, struct net *net, __be32 saddr, __be32 daddr)
 {
@@ -205,7 +209,7 @@ static int queue_packet(struct kyamir_state *ks,
     LIST_HEAD(drop_list);
     spin_lock_bh(&ks->packet_lock);
 
-    if (ks->packet_count >= QUEUE_MAX_LEN) {
+    if (ks->packet_count >= max_qlen) {
         pr_warn_ratelimited("kyamir: queue full (%d pkts). Dropping.\n", ks->packet_count);
         list_add_tail(&yp->list, &drop_list);
         yp->skb = NULL;
@@ -271,16 +275,17 @@ static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
 
     // send packets
     list_for_each_entry_safe(pos, next, &send_list, list) {
-        if (pos->skb) {
-            int rc = kyamir_ip_route_me_harder(pos->net, pos->skb, RTN_LOCAL);
+        struct sk_buff *skb = pos->skb;
+        if (skb) {
+            int rc = kyamir_ip_route_me_harder(pos->net, skb, RTN_LOCAL);
             if (rc == 0) {
                 // Reinject packet into stack
-                ip_local_out(pos->net, pos->skb->sk, pos->skb);
-                pos->skb = NULL;
+                ip_local_out(pos->net, skb->sk, skb);
+            }
+            else {
+                kfree_skb(skb);
             }
         }
-        if (pos->skb)
-            kfree_skb(pos->skb);
         kfree(pos);
     }
 }
