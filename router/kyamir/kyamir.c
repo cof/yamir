@@ -504,7 +504,7 @@ static unsigned int do_kyamir_nf(struct net *net,
         // ignore broadcasts
         if (iph->daddr == ks->bcast_addr) return rc;
 
-        // tell usersppce route is active
+        // tell userspace this route is active
         msg.ip4_addr = iph->saddr;
         msg.ifindex = in->ifindex;
         yamir_send_msg(ks, net, YAMIR_RT_INUSE, &msg);
