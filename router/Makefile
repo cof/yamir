@@ -181,7 +181,7 @@ detach:
 # tags
 # ----
 .PHONY: tags
-SOURCES = $(wildcard yamir/*.c yamir/*.h include/*.h)
+SOURCES = $(wildcard yamir/*.c yamir/*.h include/*.h kyamir/kyamir.c kyamir/compat.h)
 tags: $(SOURCES)
 	@echo "Creating tags file"
 	$(Q)$(CTAGS) $(SOURCES)
