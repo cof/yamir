@@ -145,3 +145,28 @@ static inline void kyamir_netlink_ack(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 #endif
 
+/*
+ * kyamir_sk_report_err - report a hard error to a local socket
+ *
+ * Note: skb->sk may be a request_sock or timewait sock rather than a full sock
+ * which have no sk_err field and nobody to notify, so we skip them.
+ */
+static inline void kyamir_sk_report_err(struct sock *sk, int err)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+    if (!sk_fullsock(sk))
+        return;
+#endif
+
+#ifdef WRITE_ONCE
+    WRITE_ONCE(sk->sk_err, err);
+#else
+    sk->sk_err = err;
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,16,0)
+    sk_error_report(sk);
+#else
+    sk->sk_error_report(sk);
+#endif
+}
