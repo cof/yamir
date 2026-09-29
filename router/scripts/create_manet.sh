@@ -29,6 +29,7 @@ ADDR_NS2=172.0.0.20
 ADDR_MASK=24
 LOG_LEVEL=3
 VIRT_LINK=mv1
+PING_TIMES=10
 
 start()
 {
@@ -95,8 +96,14 @@ reset() {
 
 # start route discovery
 ping() {
-   set -x
-   ip netns exec $NS1 ping -I wlan0 $ADDR_NS2
+    set -x
+    ip netns exec $NS1 ping -I wlan0 -c $PING_TIMES -i 0.1 -W 1 $ADDR_NS2
+    set +x
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "ping test failed"
+        exit "$rc"
+    fi
 }
 
 case "$1" in
