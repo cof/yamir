@@ -104,12 +104,22 @@ To control the MANET use create_manet.sh script
 **Example: Start route discovery**
 
     $ doas ./create_manet.sh ping
-    + ip netns exec yamir1 ping -I wlan0 172.0.0.20
+    + ip netns exec yamir1 ping -I wlan0 -c 10 -i 0.1 -W 1 172.0.0.20
     PING 172.0.0.20 (172.0.0.20): 56 data bytes
-    64 bytes from 172.0.0.20: seq=1 ttl=64 time=7.599 ms
-    64 bytes from 172.0.0.20: seq=2 ttl=64 time=7.727 ms
-    64 bytes from 172.0.0.20: seq=3 ttl=64 time=7.659 ms
-    64 bytes from 172.0.0.20: seq=4 ttl=64 time=7.956 ms
+    64 bytes from 172.0.0.20: seq=0 ttl=64 time=0.470 ms
+    64 bytes from 172.0.0.20: seq=1 ttl=64 time=0.440 ms
+    64 bytes from 172.0.0.20: seq=2 ttl=64 time=0.331 ms
+    64 bytes from 172.0.0.20: seq=3 ttl=64 time=0.421 ms
+    64 bytes from 172.0.0.20: seq=4 ttl=64 time=0.239 ms
+    64 bytes from 172.0.0.20: seq=5 ttl=64 time=0.421 ms
+    64 bytes from 172.0.0.20: seq=6 ttl=64 time=0.457 ms
+    64 bytes from 172.0.0.20: seq=7 ttl=64 time=0.289 ms
+    64 bytes from 172.0.0.20: seq=8 ttl=64 time=0.447 ms
+    64 bytes from 172.0.0.20: seq=9 ttl=64 time=0.460 ms
+
+    --- 172.0.0.20 ping statistics ---
+    10 packets transmitted, 10 packets received, 0% packet loss
+    round-trip min/avg/max = 0.239/0.397/0.470 ms
 
 **Example: Stopping the MANET**
 
