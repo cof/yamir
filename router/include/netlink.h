@@ -10,8 +10,8 @@
 #define YAMIR_NL_NAME "yamir_netlink"
 #define YAMIR_NL_GROUP 0
 
-// private routing protocol
-#define YAMIR_RT_PROTO 253
+// routing protocol - we resue MANET AODV protocol ID
+#define YAMIR_RT_PROTO 200
 
 // TODO remove these
 #define NETLINK_YAMIR NETLINK_USERSOCK
