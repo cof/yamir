@@ -392,7 +392,7 @@ static int netlink_send(int fd, void *data, size_t len)
 
     // send msg to kernel
     ssize_t nsent = sendmsg(fd, &mh, 0);
-    if (nsent == -1) return log_errno_rf("rnetlink_send");
+    if (nsent == -1) return log_errno_rf("netlink_send");
 
     return 0;
 }
@@ -1692,7 +1692,7 @@ static int nlh_rta_add(struct nlmsghdr *nlh, size_t maxlen,
 }
 
 /*
- * send msg to rtnetlink
+ * send rtnetlink message
  * route add dest/prefix dev if metric hop_count via nexthop_addr
  */
 static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr)

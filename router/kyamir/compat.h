@@ -106,16 +106,16 @@ static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct s
 }
 
 // assign new route to packet
-static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb, unsigned addr_type)
+static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
     /* Modern kernels (4 args) */
-    return ip_route_me_harder(net, skb->sk, skb, addr_type);
+    return ip_route_me_harder(net, skb->sk, skb, RTN_UNICAST);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-    return ip_route_me_harder(net, skb, addr_type);
+    return ip_route_me_harder(net, skb, RTN_UNICAST);
 #else
     /* Samsung S2 / HTC Desire era */
-    return ip_route_me_harder(skb, addr_type);
+    return ip_route_me_harder(skb, RTN_UNICAST);
 #endif
 }
 
