@@ -1720,10 +1720,11 @@ static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr)
     nlh->nlmsg_seq   = ys->route_seqno++;
 
     if (type == RTM_NEWROUTE) {
+        // NOTE: IPv4 FIB reports this as FIB_EVENT_ENTRY_REPLACE
         nlh->nlmsg_flags |= NLM_F_CREATE | NLM_F_REPLACE;
     }
     uint32_t dst_prefix = dr->prefix;
-    if (dst_prefix == 0) dst_prefix = 32;
+    if (!dst_prefix) dst_prefix = 32;
 
     // setup rtnetlink msg
     struct rtmsg *rtm = &req.rtm;
