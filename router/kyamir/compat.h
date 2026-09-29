@@ -6,32 +6,7 @@
 #ifndef _COMPAT_H_
 #define _COMPAT_H_
 
-#include <linux/version.h>
 #include <linux/string.h>
-#include <net/net_namespace.h>
-
-#ifndef pr_err
-#define pr_err(fmt, ...) printk(KERN_ERR fmt, ##__VA_ARGS__)
-#endif
-
-#ifndef pr_info
-#define pr_info(fmt, ...) printk(KERN_INFO fmt, ##__VA_ARGS__)
-#endif
-
-#ifndef pr_warn
-#define pr_warn(fmt, ...) printk(KERN_WARNING fmt, ##__VA_ARGS__)
-#endif
-
-#ifndef pr_debug
-#ifdef DEBUG
-#define pr_debug(fmt, ...) \
-        printk(KERN_DEBUG fmt, ##__VA_ARGS__)
-#else
-#define pr_debug(fmt, ...) \
-        do { } while (0)
-#endif
-#endif
-
 
 /**
  * kyamir_get_net - Safely retrieves the net pointer.
