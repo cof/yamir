@@ -1,6 +1,18 @@
 #!/bin/bash
 
 # script to manage MANET
+#
+# Topology:
+#
+#      ns1             ns2
+#     yamird          yamird
+#       |               |
+#     wlan0           wlan0
+#   172.0.0.10/24   172.0.0.20/24
+#       |              |
+#    macvlan        macvlan
+#       |              |
+#       +--- bridge ---+
 
 RUN_DIR=/home/alpine
 KYAMIR=$RUN_DIR/kyamir/kyamir.ko
@@ -16,28 +28,30 @@ ADDR_NS1=172.0.0.10
 ADDR_NS2=172.0.0.20
 ADDR_MASK=24
 LOG_LEVEL=3
-TMP_NAME=mv1
+VIRT_LINK=mv1
 
 start()
 {
+    # trace commands
     set -x
-    # need interface for MACVLAN master
+
+    # create bridge interface
     ip link add $BRIDGE type dummy
     ip link set $BRIDGE up
 
-    # add ns1 network
+    # create ns1 - attach macvlan link to bridge
     ip netns add $NS1
-    ip link add link $BRIDGE name $TMP_NAME type macvlan mode bridge
-    ip link set mv1 netns $NS1
-    ip netns exec $NS1 ip link set $TMP_NAME name $IFNAME
+    ip link add link $BRIDGE name $VIRT_LINK type macvlan mode bridge
+    ip link set $VIRT_LINK netns $NS1
+    ip netns exec $NS1 ip link set $VIRT_LINK name $IFNAME
     ip netns exec $NS1 ip addr add $ADDR_NS1/$ADDR_MASK dev wlan0
     ip netns exec $NS1 ip link set $IFNAME up
 
-    # add ns2 network
+    # create ns2 - attach macvlan link to bridge
     ip netns add $NS2
-    ip link add link $BRIDGE name $TMP_NAME type macvlan mode bridge
-    ip link set mv1 netns $NS2
-    ip netns exec $NS2 ip link set $TMP_NAME name $IFNAME
+    ip link add link $BRIDGE name $VIRT_LINK type macvlan mode bridge
+    ip link set $VIRT_LINK netns $NS2
+    ip netns exec $NS2 ip link set $VIRT_LINK name $IFNAME
     ip netns exec $NS2 ip addr add $ADDR_NS2/$ADDR_MASK dev wlan0
     ip netns exec $NS2 ip link set $IFNAME up
 
@@ -51,16 +65,21 @@ start()
 
 stop()
 {
+    # trace commands
     set -x
 
-    # stop router
+    # stop yamird instances across all namespaces
     pkill -f $YAMIRD
+
+    # unload kernel module
     rmmod $KYAMIR
 
-    # delete network
+    # remove namespaces
     ip netns del $NS2
     ip netns del $NS1
-    ip link del  $BRIDGE
+
+    # remove bridge
+    ip link del $BRIDGE
 }
 
 status() {
