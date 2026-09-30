@@ -163,7 +163,7 @@ test-yamir: $(YAMIR) build-vm
 	echo " => Copying $(KYAMIR_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp -q $(VM_SSH_OPTS) -r $(KYAMIR_DIR) include yamird scripts/create_manet.sh $$VM_SSH_ADDR:$(VM_HOME);  \
 	echo " => Building $(KYAMIR_DIR)"; \
-	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "cd kyamir; make"; \
+	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "cd kyamir; make DEBUG=$(DEBUG)"; \
 	echo " => Running setcap $(YAMIR)"; \
 	ssh $(VM_SSH_OPTS) $$VM_SSH_ADDR "doas setcap cap_net_bind_service,cap_net_raw,cap_net_admin=+ep $(YAMIR)"; \
 	echo "$@ complete."

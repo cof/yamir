@@ -35,7 +35,6 @@
  *
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt, __func__
-#define DEBUG
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -59,7 +58,7 @@
 #include "netlink.h"
 #include "compat.h"
 
-static int kyamir_netid; // namespace id
+static int kyamir_netid; // kernel module per-net id
 static int kyamir_exiting = false;
 
 /* linux kernel ./net/ipv4/netfilter/ip_queue.c
@@ -186,8 +185,7 @@ static void send_all(struct net *net, struct sk_buff_head *snd_q)
 // move all pending packets for addr to dst_q
 static bool drain_pending(struct kyamir_state *ks, struct sk_buff_head *dst_q, __be32 addr)
 {
-    __be32 tmp_addr = addr;
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &tmp_addr);
+    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
     spin_lock_bh(&ks->pending_lock);
 
@@ -234,8 +232,7 @@ static int queue_packet(struct kyamir_state *ks,
     struct net *net, struct sk_buff *skb,
     __be32 addr)
 {
-    __be32 tmp_addr = addr;
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &tmp_addr);
+    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
     spin_lock_bh(&ks->pending_lock);
     
@@ -279,8 +276,7 @@ drop_unlock:
 
 static void drop_addr(struct kyamir_state *ks, struct net *net, uint32_t addr)
 {
-    __be32 tmp_addr = addr;
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &tmp_addr);
+    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
     // gather packets
     struct sk_buff_head drop_q;
@@ -292,22 +288,17 @@ static void drop_addr(struct kyamir_state *ks, struct net *net, uint32_t addr)
 
 static void flush_all(struct kyamir_state *ks, struct net *net)
 {
-    pr_debug("ENTRY\n");
-
     // gather packets
     struct sk_buff_head drop_q;
     __skb_queue_head_init(&drop_q);
 
     drain_all(ks, &drop_q);
     drop_all(net, &drop_q);
-
-    pr_debug("EXIT\n");
 }
 
 static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
 {
-    __be32 tmp_addr = addr;
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &tmp_addr);
+    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
 
     // gather packets
     struct sk_buff_head send_q;
@@ -658,10 +649,10 @@ static struct nf_hook_ops kyamir_hook_ops[] = {
      },
 };
 
-// unregisted all netfilter hooks
+// unregister all netfilter hooks
 static void kyamir_netfilter_deinit(struct kyamir_state *ks, struct net *net)
 {
-    pr_debug("start netid=%d nsid=%u\n", kyamir_netid,  net->ns.inum);
+    pr_debug("netid=%d nsid=%u\n", kyamir_netid,  net->ns.inum);
 
     int i = ARRAY_SIZE(kyamir_hook_ops);
     while (i > 0) {
@@ -679,7 +670,7 @@ static void kyamir_netfilter_deinit(struct kyamir_state *ks, struct net *net)
 // register netfilter hooks (after device loaded)
 static int kyamir_netfilter_init(struct kyamir_state *ks, struct net *net)
 {
-    pr_debug("ENTRY netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
+    pr_debug("netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
 
     int rc = 0, i;
     for (i = 0; i < ARRAY_SIZE(kyamir_hook_ops); i++) {
@@ -859,7 +850,7 @@ static struct notifier_block my_netdev_nb = {
 
 static void __net_exit my_exit_net(struct net *net)
 {
-    pr_debug("ENTRY netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
+    pr_debug("netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
 
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks) return;
