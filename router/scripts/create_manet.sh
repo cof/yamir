@@ -18,7 +18,7 @@ RUN_DIR=/home/alpine
 KYAMIR=$RUN_DIR/kyamir/kyamir.ko
 YAMIRD=$RUN_DIR/yamird
 
-# config
+# network
 IFNAME=wlan0
 MAX_QLEN=1024
 BRIDGE=mac-wlan0
@@ -29,7 +29,15 @@ ADDR_NS2=172.0.0.20
 ADDR_MASK=24
 LOG_LEVEL=3
 VIRT_LINK=mv1
+# ping
 PING_TIMES=10
+PING_INTERVAL=0.1
+# tcp
+TEST_FILE=/tmp/manet_test.txt
+FILE_SIZE=$((10 * 1024 * 1024))
+TCP_OUT=/tmp/$NS2-tcp.out
+TCP_PORT=5001
+TCP_TIMOUT=5
 
 start()
 {
@@ -62,12 +70,17 @@ start()
     # launch userspace
     ip netns exec $NS1 $YAMIRD -d -i $IFNAME -f /var/log/$NS1.log -l $LOG_LEVEL
     ip netns exec $NS2 $YAMIRD -d -i $IFNAME -f /var/log/$NS2.log -l $LOG_LEVEL
+
+	# generate test file
+	head -c "$FILE_SIZE" /dev/zero > "$TEST_FILE"
 }
 
 stop()
 {
     # trace commands
     set -x
+
+	rm -f "$TEST_FILE"
 
     # stop yamird instances across all namespaces
     pkill -f $YAMIRD
@@ -94,10 +107,20 @@ reset() {
     > /var/log/$NS2.log
 }
 
+# list routes
+route() {
+    ip netns exec $NS1 ip route
+    ip netns exec $NS2 ip route
+}
+
 # start route discovery
 ping() {
+	# trace commands
     set -x
-    ip netns exec $NS1 ping -I wlan0 -c $PING_TIMES -i 0.1 -W 1 $ADDR_NS2
+	
+	# run ping in NS1 for addr in NS2
+    ip netns exec $NS1 ping -I $IFNAME -c $PING_TIMES -i $PING_INTERVAL -W 1 $ADDR_NS2
+
     set +x
     rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -106,12 +129,69 @@ ping() {
     fi
 }
 
+tcp()
+{
+    # start TCP server in NS2
+    echo "Starting TCP server"
+    rm -f "$TCP_OUT"
+
+    ip netns exec $NS2 nc -l -w 2 -p $TCP_PORT > "$TCP_OUT" &
+    SERVER_PID=$!
+    sleep 1
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "TCP test failed: nc server not running"
+        # clean up
+        rm -f "$TCP_OUT"
+        return 1
+    fi
+
+    # client sends file from NS1
+    echo "Sending file"
+	ip netns exec "$NS1" nc -w 2 "$ADDR_NS2" "$TCP_PORT" < "$TEST_FILE"
+	rc=$?
+
+    # Check send result
+    if [ "$rc" -ne 0 ]; then
+        echo "TCP test failed: nc returned $rc"
+		# clean up
+		kill "$SERVER_PID" 2>/dev/null
+		wait "$SERVER_PID" 2>/dev/null
+        rm -f "$TCP_OUT"
+		# report error
+        return "$rc"
+    fi
+
+	# wait for server to finish
+	sleep 1
+
+    # verify rx byte count
+	if ! cmp -s "$TCP_OUT" "$TEST_FILE"; then
+        echo "TCP test failed : file mistmatch"
+		# clean up
+		kill "$SERVER_PID" 2>/dev/null
+		wait "$SERVER_PID" 2>/dev/null
+        rm -f "$TCP_OUT"
+		# report error
+        return 1
+    fi
+
+    echo "TCP test passed"
+
+	# clean up
+	kill "$SERVER_PID" 2>/dev/null
+	wait "$SERVER_PID" 2>/dev/null
+    rm -f "$TCP_OUT"
+
+    return 0
+}
+
 case "$1" in
     start)  start ;;
     stop)   stop ;;
     status) status ;;
-    ping)   ping ;;
     reset)  reset ;;
-    *) echo "Usage: $0 {start|stop|status|ping|reset}" ;;
+    ping)   ping ;;
+    tcp)    tcp ;; 
+    *) echo "Usage: $0 {start|stop|status|route|ping|tcp|reset}" ;;
 esac
 
