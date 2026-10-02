@@ -102,14 +102,15 @@ struct yamir_state {
     // our kernel module
     int kyamir_fd;
     int family_id;
+    uint32_t genl_seqno;
     struct sockaddr_nl yamir_addr;
+    struct list_elem genl_reqs;
 
     // linux rtnetlink module
-    uint32_t rtnl_seqno;
     int route_fd;
+    uint32_t rtnl_seqno;
     struct sockaddr_nl route_addr;
     struct list_elem routes;
-    struct list_elem free_routes;
 
     // timers
     struct timer_mgr timers;
@@ -673,14 +674,7 @@ static void route_done(struct dymo_route *dr)
     log_debug("state=%s(%u)", rtstate_tostr(dr->state), dr->state);
 
     list_remove(&dr->node);
-
-    struct yamir_state *ys = dr->parent;
-    if (!ys) {
-        free(dr);
-        return;
-    }
-
-    list_append(&ys->free_routes, &dr->node);
+    free(dr);
 }
 
 static void route_delete(struct dymo_route *dr)
@@ -691,21 +685,11 @@ static void route_delete(struct dymo_route *dr)
 
 static struct dymo_route *route_create(struct yamir_state *ys)
 {
-    struct dymo_route *dr;
+    struct dymo_route *dr = calloc(1, sizeof(*dr));
+    if (!dr) return log_error_rn("malloc route failed");
 
-    dr = list_first(&ys->free_routes, struct dymo_route, node);
-
-    if (!dr) {
-        // add new entry
-        dr = malloc(sizeof(*dr));
-        if (!dr) return NULL;
-        list_init(&dr->node);
-    }
-
-    list_remove(&dr->node);
-    memset(dr, 0, sizeof(*dr));
+    // init fields
     dr->parent = ys;
-
     dr->rtnl_timer = -1;
     dr->age_timer = -1;
     dr->seqnum_timer = -1;
@@ -1998,6 +1982,8 @@ static void yamir_free(struct yamir_state *ys)
     if (ys->kyamir_fd != -1) close(ys->kyamir_fd);
     if (ys->dymo_fd != -1) close(ys->dymo_fd);
 
+    // TODO clear lists ?
+
     free(ys);
 }
 
@@ -2010,8 +1996,8 @@ static struct yamir_state *yamir_create(void)
     memset(ys, 0, sizeof(*ys));
 
     ys->port = DYMO_PORT;
+    list_init(&ys->genl_reqs);
     list_init(&ys->routes);
-    list_init(&ys->free_routes);
 
     ys->family_id = -1;
     ys->dymo_fd   = -1;
