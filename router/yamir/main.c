@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
  * YAMIR - Yet Another MANET IP Router
@@ -138,8 +137,19 @@ struct yamir_state {
 #define DYMO_RREP 11
 #define DYMO_RERR 12
 
+static inline const char *msg_type_tostr(int msg_type)
+{
+    switch(msg_type) {
+    case DYMO_RREQ: return "RREQ";
+    case DYMO_RREP: return "RREP";
+    case DYMO_RERR: return "RERR";
+    default: return "???";
+    }
+}
+
+
 // dymo route state
-enum dymo_rtstate  {
+enum dymo_routestate  {
     DRS_NONE = 0,
     DRS_DISCOVER,
     DRS_ADDING,
@@ -147,6 +157,19 @@ enum dymo_rtstate  {
     DRS_DELETING,
     DRS_INVALID
 };
+
+static inline const char *rtstate_tostr(enum dymo_routestate rtstate)
+{
+    switch(rtstate) {
+    case DRS_NONE: return "NONE";
+    case DRS_DISCOVER: return "DISCOVER";
+    case DRS_ADDING: return "ADDING";
+    case DRS_ACTIVE: return "ACTIVE";
+    case DRS_DELETING: return "DELETING";
+    case DRS_INVALID: return "INVALID";
+    default: return "???";
+    }
+}
 
 struct dymo_req {
    	uint32_t addr;
@@ -159,10 +182,10 @@ struct dymo_req {
 };
 
 // 4.1  DYMO route state
-struct dymo_rt {
+struct dymo_route {
     struct list_elem node;
     void *parent;
-    enum dymo_rtstate state;
+    enum dymo_routestate state;
     // route discovery
 	struct dymo_req req;
     // flags
@@ -185,7 +208,7 @@ struct dymo_rt {
     int del_timer;
 };
 
-// all ROUTE timeouts scaled from secs to ms
+// ROUTE timeouts scaled from secs to ms
 #define DR_RNTL_TIMEOUT  500
 #define DR_TIMEOUT         (5 * 1000)
 #define DR_AGE_MIN         (1 * 1000)
@@ -211,18 +234,6 @@ static inline bool yamir_islocaladdr(struct yamir_state *ys, struct pbb_node *mn
     return ys->local_addr == mn->ip4_addr;
 }
 
-static const char *yamir_type_tostr(uint32_t type)
-{
-    static char *names[] = {
-        [YAMIR_RT_REG]   = "RT_REG",
-        [YAMIR_RT_NONE]  = "RT_NONE",
-        [YAMIR_RT_NEED]  = "RT_NEED",
-        [YAMIR_RT_INUSE] = "RT_INUSE",
-        [YAMIR_RT_ERR]   = "RT_ERR"
-    };
-
-    return type < ARR_LEN(names) ? names[type] : "UNKNOWN";
-}
 
 static const char *rtnl_type_tostr(uint32_t type)
 {
@@ -259,7 +270,7 @@ static inline const char *addr_tostr(uint32_t addr)
     return pbb_addr_tostr(4, (void *) &addr);
 }
 
-static const char *route_tostr(struct dymo_rt *dr)
+static const char *route_tostr(struct dymo_route *dr)
 {
     static char bufs[4][128];
     static int idx;
@@ -271,7 +282,8 @@ static const char *route_tostr(struct dymo_rt *dr)
     if (!dr) return "<none>";
 
     snprintf(buf, size,
-        "addr=%s/%d gwaddr=%s gwifindex=%u seqnum=%d dist=%u",
+        "state=%s(%u) addr=%s/%d gwaddr=%s gwifindex=%u seqnum=%d dist=%u",
+        rtstate_tostr(dr->state), dr->state,
         addr_tostr(dr->addr), dr->prefix,
         addr_tostr(dr->nexthop_addr), dr->nexthop_ifindex,
         dr->seqnum, dr->dist);
@@ -333,8 +345,8 @@ static const char *recv_state_tostr(struct recv_state *rs)
 
 static struct dymo_req *route_findreq(struct yamir_state *ys, uint32_t addr);
 static void dymo_end_req(struct dymo_req *req, int rc);
-static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg, uint32_t *seq);
-static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr);
+static int yamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg, uint32_t *seq);
+static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_route *dr);
 
 // stevens page 533 // see ip 7 IP_PKTINFO
 static int recvfrom_wstate(int fd, size_t vlen,
@@ -403,18 +415,18 @@ static void catch_signal(int signo, siginfo_t *info, void *ucontext)
     keep_running = 0;
 }
 
-// find entry with longest prefix matching (rfc1812)
-static struct dymo_rt *match_route(struct yamir_state *ys, uint32_t addr)
+// find route entry with longest prefix match (rfc1812)
+static struct dymo_route *match_route(struct yamir_state *ys, uint32_t addr)
 {
-    struct dymo_rt *match = NULL;
-    struct dymo_rt *dr;
+    struct dymo_route *match = NULL;
+    struct dymo_route *dr;
 
     log_debug("addr=%s", addr_tostr(addr));
 
     addr = ntohl(addr);
 
     list_fornext_entry(&ys->routes, dr, node) {
-        log_debug("addr=%s state=%u", addr_tostr(dr->addr), dr->state);
+        log_debug("check-route %s", route_tostr(dr));
         if (dr->state != DRS_ACTIVE && dr->state != DRS_ADDING) continue;
         if (!match || dr->prefix > match->prefix) {
             uint32_t mask = (dr->prefix == 0) ? 0 : (~0U << (32 - dr->prefix));
@@ -430,11 +442,11 @@ static struct dymo_rt *match_route(struct yamir_state *ys, uint32_t addr)
     return match;
 }
 
-static struct dymo_rt *route_nlseq_find(struct yamir_state *ys, uint32_t nlseq)
+static struct dymo_route *route_nlseq_find(struct yamir_state *ys, uint32_t nlseq)
 {
     log_debug("nlseq=%u", nlseq);
 
-    struct dymo_rt *dr;
+    struct dymo_route *dr;
 
     // replace with hashmap  ?
     list_fornext_entry(&ys->routes, dr, node) {
@@ -449,7 +461,7 @@ static struct dymo_req *route_findreq(struct yamir_state *ys, uint32_t addr)
 {
     log_debug("addr=%s", addr_tostr(addr));
 
-    struct dymo_rt *dr;
+    struct dymo_route *dr;
 
     // replace with hashmap ?
     list_fornext_entry(&ys->routes, dr, node) {
@@ -462,7 +474,7 @@ static struct dymo_req *route_findreq(struct yamir_state *ys, uint32_t addr)
 }
 
 // section 5.2.1.
-static int node_superior(struct pbb_node *mn, struct dymo_rt *dr, int msg_type)
+static int node_superior(struct pbb_node *mn, struct dymo_route *dr, int msg_type)
 {
     // 1. stale (what's wrong with signed 32 bit)
     if ((int16_t) mn->seqnum - (int16_t) dr->seqnum < 0) {
@@ -487,12 +499,12 @@ static int node_superior(struct pbb_node *mn, struct dymo_rt *dr, int msg_type)
     return 1;
 }
 
-static void route_delete(struct dymo_rt *dr);
-static void rtnl_send_done(struct dymo_rt *dr, int rc);
+static void route_delete(struct dymo_route *dr);
+static void rtnl_send_done(struct dymo_route *dr, int rc);
 
 static void rtnl_timeout_cb(void *arg)
 {
-    struct dymo_rt *dr = arg;
+    struct dymo_route *dr = arg;
 
     log_debug("timeout seq=%u", dr->nlseq);
 
@@ -500,7 +512,8 @@ static void rtnl_timeout_cb(void *arg)
     rtnl_send_done(dr, RTNL_TIMEOUT);
 }
 
-static inline void stop_rtnl_timer(struct dymo_rt *dr)
+// stop netlink msg timer
+static inline void stop_nl_timer(struct dymo_route *dr)
 {
     if (dr->rtnl_timer == -1) return;
 
@@ -511,7 +524,8 @@ static inline void stop_rtnl_timer(struct dymo_rt *dr)
     dr->rtnl_timer = -1;
 }
 
-static void start_rtnl_timer(struct dymo_rt *dr)
+// start netlink msg timer
+static void start_nl_timer(struct dymo_route *dr)
 {
     if (dr->rtnl_timer != -1) return;
 
@@ -527,7 +541,7 @@ static void start_rtnl_timer(struct dymo_rt *dr)
 
 static void delete_timeout_cb(void *arg)
 {
-    struct dymo_rt *dr = arg;
+    struct dymo_route *dr = arg;
 
     log_debug("delete timeout");
 
@@ -535,7 +549,7 @@ static void delete_timeout_cb(void *arg)
     route_delete(dr);
 }
 
-static inline void stop_delete_timer(struct dymo_rt *dr)
+static inline void stop_delete_timer(struct dymo_route *dr)
 {
     if (dr->del_timer == -1) return;
 
@@ -545,7 +559,7 @@ static inline void stop_delete_timer(struct dymo_rt *dr)
     dr->del_timer = -1;
 }
 
-static void start_delete_timer(struct dymo_rt *dr)
+static void start_delete_timer(struct dymo_route *dr)
 {
     if (dr->del_timer != -1) return;
 
@@ -564,7 +578,7 @@ static void start_delete_timer(struct dymo_rt *dr)
 // similar to a route used logic
 static void age_timeout_cb(void *arg)
 {
-    struct dymo_rt *dr = arg;
+    struct dymo_route *dr = arg;
 
     log_debug("age timeout");
 
@@ -572,7 +586,7 @@ static void age_timeout_cb(void *arg)
     start_delete_timer(dr);
 }
 
-static inline void stop_age_timer(struct dymo_rt *dr)
+static inline void stop_age_timer(struct dymo_route *dr)
 {
     if (dr->age_timer == -1) return;
 
@@ -583,7 +597,7 @@ static inline void stop_age_timer(struct dymo_rt *dr)
 
 static void seqnum_timeout_cb(void *arg)
 {
-    struct dymo_rt *dr = arg;
+    struct dymo_route *dr = arg;
 
     log_debug("seqnum timeout");
 
@@ -591,7 +605,7 @@ static void seqnum_timeout_cb(void *arg)
     dr->seqnum = 0;
 }
 
-static inline void stop_seqnum_timer(struct dymo_rt *dr)
+static inline void stop_seqnum_timer(struct dymo_route *dr)
 {
     if (dr->seqnum_timer == -1) return;
 
@@ -600,7 +614,7 @@ static inline void stop_seqnum_timer(struct dymo_rt *dr)
     dr->seqnum_timer = -1;
 }
 
-static inline void stop_used_timer(struct dymo_rt *dr)
+static inline void stop_used_timer(struct dymo_route *dr)
 {
     if (dr->used_timer == -1) return;
 
@@ -612,17 +626,17 @@ static inline void stop_used_timer(struct dymo_rt *dr)
 // 5.2.3.3.
 static void used_timeout_cb(void *arg)
 {
-    struct dymo_rt *dr = arg;
+    struct dymo_route *dr = arg;
 
     dr->used_timer = -1;
     start_delete_timer(dr);
 }
 
-static void route_stop_timers(struct dymo_rt *dr)
+static void route_stop_timers(struct dymo_route *dr)
 {
     log_debug("Stopping timers");
 
-    stop_rtnl_timer(dr);
+    stop_nl_timer(dr);
     stop_delete_timer(dr);
     stop_seqnum_timer(dr);
     stop_used_timer(dr);
@@ -631,7 +645,7 @@ static void route_stop_timers(struct dymo_rt *dr)
 
 
 // Send a rtnetlink del route message
-static void rtnl_del_route(struct dymo_rt *dr)
+static void rtnl_del_route(struct dymo_route *dr)
 {
     dr->state = DRS_DELETING;
     int rc = rtnl_send_msg(dr->parent, RTM_DELROUTE, dr);
@@ -639,9 +653,12 @@ static void rtnl_del_route(struct dymo_rt *dr)
 }
 
 // Send a rtnetlink new route message
-static int rtnl_add_route(struct dymo_rt *dr)
+static int rtnl_add_route(struct dymo_route *dr)
 {
     dr->state = DRS_ADDING;
+
+    log_debug("adding route %s", route_tostr(dr));
+
     int rc = rtnl_send_msg(dr->parent, RTM_NEWROUTE, dr);
     if (rc) {
         // send failed
@@ -653,9 +670,9 @@ static int rtnl_add_route(struct dymo_rt *dr)
     return 0;
 }
 
-static void route_done(struct dymo_rt *dr)
+static void route_done(struct dymo_route *dr)
 {
-    log_debug("state=%u", dr->state);
+    log_debug("state=%s(%u)", rtstate_tostr(dr->state), dr->state);
 
     list_remove(&dr->node);
 
@@ -668,17 +685,17 @@ static void route_done(struct dymo_rt *dr)
     list_append(&ys->free_routes, &dr->node);
 }
 
-static void route_delete(struct dymo_rt *dr)
+static void route_delete(struct dymo_route *dr)
 {
     route_stop_timers(dr);
     rtnl_del_route(dr);
 }
 
-static struct dymo_rt *route_create(struct yamir_state *ys)
+static struct dymo_route *route_create(struct yamir_state *ys)
 {
-    struct dymo_rt *dr;
+    struct dymo_route *dr;
 
-    dr = list_first(&ys->free_routes, struct dymo_rt, node);
+    dr = list_first(&ys->free_routes, struct dymo_route, node);
 
     if (!dr) {
         // add new entry
@@ -702,12 +719,12 @@ static struct dymo_rt *route_create(struct yamir_state *ys)
     return dr;
 }
 
-
-static void rtnl_send_done(struct dymo_rt *dr, int rc)
+static void rtnl_send_done(struct dymo_route *dr, int rc)
 {
-    log_debug("state=%u nlseq=%u rc=%d", dr->state, dr->nlseq, rc);
+    log_debug("state=%s(%u) nlseq=%u rc=%d", 
+        rtstate_tostr(dr->state), dr->state, dr->nlseq, rc);
 
-    stop_rtnl_timer(dr);
+    stop_nl_timer(dr);
 
     switch(dr->state) {
     case DRS_NONE:
@@ -756,13 +773,15 @@ static bool route_update(struct yamir_state *ys,
     int msg_type, struct pbb_node *mn,
     uint32_t nexthop_addr, uint32_t nexthop_ifindex)
 {
-    log_debug("type=%d mnaddr=%s gwaddr=%s gwifindex=%u",
-        msg_type, addr_tostr(mn->ip4_addr),
-        addr_tostr(nexthop_addr), nexthop_ifindex);
+    log_debug("type=%s(%d) mnaddr=%s gwaddr=%s gwifindex=%u",
+        msg_type_tostr(msg_type), msg_type, 
+        addr_tostr(mn->ip4_addr), addr_tostr(nexthop_addr),
+        nexthop_ifindex);
 
-    struct dymo_rt *dr = match_route(ys, mn->ip4_addr);
+    struct dymo_route *dr = match_route(ys, mn->ip4_addr);
 
-    if (dr && !node_superior(mn, dr, msg_type)) return false;
+    if (dr && !node_superior(mn, dr, msg_type))
+        return false;
 
     if (dr) {
         route_stop_timers(dr);
@@ -771,7 +790,7 @@ static bool route_update(struct yamir_state *ys,
         dr = route_create(ys);
     }
 
-    // update entry 5.2.2
+    // update route entry - 5.2.2
     dr->created_ts = get_now_ms();
     dr->addr = mn->ip4_addr;
 
@@ -853,7 +872,7 @@ static int dymo_send_reply(struct yamir_state *ys, struct pbb_msg *req)
     reply.target = pbb_copy_node(&reply, req->origin);
     reply.origin = pbb_copy_node(&reply, req->target);
 
-    struct dymo_rt *dr = match_route(ys, reply.target->ip4_addr);
+    struct dymo_route *dr = match_route(ys, reply.target->ip4_addr);
     if (!dr) return log_error_rf("No route to target");
 
     if (!pbb_node_seqn(reply.target) ||
@@ -876,7 +895,7 @@ static int dymo_send_reply(struct yamir_state *ys, struct pbb_msg *req)
 
 static int dymo_recv_reply(struct yamir_state *ys, struct pbb_msg *reply)
 {
-    log_debug("reply=(%s)", dymo_msg_tostr(reply));
+    log_debug("reply(%s)", dymo_msg_tostr(reply));
 
     struct dymo_req *req;
 
@@ -956,7 +975,7 @@ static int dymo_rerr_send(struct yamir_state *ys, uint32_t addr, uint16_t seqnum
 // 5.3.4 page 24 relay route-message
 static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_state *rs)
 {
-    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rmsg));
+    log_debug("rs=(%s) rmsg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rmsg));
 
     // append additional routing info
 
@@ -978,7 +997,7 @@ static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_
     if (rmsg->type == DYMO_RREP || is_unicast(rs->daddr)) {
         // need check if rm can be routed towards target
         struct pbb_node *target = rmsg->target;
-        struct dymo_rt *dr = match_route(ys, target->ip4_addr);
+        struct dymo_route *dr = match_route(ys, target->ip4_addr);
         if (!dr) return dymo_rerr_send(ys, target->ip4_addr, target->seqnum, target->prefix);
         if (dr->is_broken) return dymo_rerr_send(ys, target->ip4_addr, dr->seqnum, target->prefix);
         dst_addr = dr->nexthop_addr;
@@ -1025,7 +1044,7 @@ static int fixup_nodes(struct pbb_msg *msg)
 static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv_state *rs)
 {
     int skip = fixup_nodes(rreq);
-    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rreq));
+    log_debug("rs=(%s) rreq(%s)", recv_state_tostr(rs), dymo_msg_tostr(rreq));
 
     // check required fields present
     int rc = validate_msg(ys, rreq);
@@ -1056,7 +1075,7 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
 static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv_state *rs)
 {
     int skip = fixup_nodes(rrep);
-    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rrep));
+    log_debug("rs(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rrep));
 
     // check required fields present
     int rc = validate_msg(ys, rrep);
@@ -1089,7 +1108,7 @@ static bool route_broken(struct yamir_state *ys, struct pbb_node *mn, uint32_t s
 {
     if (!is_unicast(mn->ip4_addr)) return 0;
 
-    struct dymo_rt *dr = match_route(ys, mn->ip4_addr);
+    struct dymo_route *dr = match_route(ys, mn->ip4_addr);
     if (!dr) return false;
 
     if (!dr->is_broken &&
@@ -1117,7 +1136,7 @@ static int validate_rerr(struct yamir_state *s, struct pbb_msg *rerr)
 
 static int handle_rerr(struct yamir_state *ys, struct pbb_msg *rerr, struct recv_state *rs)
 {
-    log_debug("rs=(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rerr));
+    log_debug("rs=(%s) rerr(%s)", recv_state_tostr(rs), dymo_msg_tostr(rerr));
 
     // check required fields present
     int rc = validate_rerr(ys, rerr);
@@ -1160,7 +1179,7 @@ static void dymo_end_req(struct dymo_req *req, int rc)
 {
     log_debug("addr=%s rc=%d", addr_tostr(req->addr), rc);
 
-    struct dymo_rt *dr = containerof(req, struct dymo_rt, req);
+    struct dymo_route *dr = containerof(req, struct dymo_route, req);
 
     dr->state = rc ? DRS_INVALID : DRS_ACTIVE;
 
@@ -1173,7 +1192,7 @@ static void dymo_end_req(struct dymo_req *req, int rc)
     if (rc) {
         // route discovery failed
         struct yamir_msg msg = { req->addr, req->ifindex };
-        rc = kyamir_send_msg(dr->parent, YAMIR_RT_NONE, &msg, &dr->nlseq);
+        rc = yamir_send_msg(dr->parent, YAMIR_RT_NONE, &msg, &dr->nlseq);
     }
 
     if (rc) route_done(dr);
@@ -1235,8 +1254,8 @@ static int dymo_out_req(struct dymo_req *req)
         DISCOVERY_ATTEMPTS_MAX,
         req->wait_time);
 
-    struct dymo_rt *dr = containerof(req, struct dymo_rt, req);
-    struct dymo_rt *info = match_route(dr->parent, req->addr);
+    struct dymo_route *dr = containerof(req, struct dymo_route, req);
+    struct dymo_route *info = match_route(dr->parent, req->addr);
 
     if (info) {
         // have info about the target
@@ -1283,7 +1302,7 @@ static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
         return;
     }
 
-    struct dymo_rt *dr = route_create(ys);
+    struct dymo_route *dr = route_create(ys);
     if (!dr) return log_errno_rv("route_create failed");
 
     req = &dr->req;  
@@ -1305,7 +1324,7 @@ static void route_inuse(struct yamir_state *ys, struct yamir_msg *msg)
 {
     log_debug("addr=%s ifindex=%d", addr_tostr(msg->ip4_addr), msg->ifindex);
 
-    struct dymo_rt *dr = match_route(ys, msg->ip4_addr);
+    struct dymo_route *dr = match_route(ys, msg->ip4_addr);
     if (!dr) return;
 
     // can't attend to a broken route
@@ -1327,7 +1346,7 @@ static void route_err(struct yamir_state *ys, struct yamir_msg *msg)
 {
     log_debug("addr=%s ifindex=%d", addr_tostr(msg->ip4_addr), msg->ifindex);
 
-    struct dymo_rt *dr = match_route(ys, msg->ip4_addr);
+    struct dymo_route *dr = match_route(ys, msg->ip4_addr);
 
     // normal case - no forwarding route
     if (!dr) {
@@ -1356,8 +1375,8 @@ static int dymo_process_mmsg(struct yamir_state *ys,
     uint8_t *pkt = mmsg->msg_hdr.msg_iov->iov_base;
     size_t len = mmsg->msg_len;
 
-    log_debug("recv %zu bytes src=%s dst=%s ifindex=%u",
-        len, addr_tostr(rs->saddr), addr_tostr(rs->daddr), rs->ifindex);
+    log_debug("src=%s dst=%s ifindex=%u bytes=%zu",
+        addr_tostr(rs->saddr), addr_tostr(rs->daddr), rs->ifindex, len);
 
     // check if we are the sender
     if (rs->saddr == ys->local_addr) {
@@ -1409,13 +1428,13 @@ static int dymo_recv(struct yamir_state *ys)
 }
 
 // send msg to kyamir
-static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg, uint32_t *seq)
+static int yamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *msg, uint32_t *seq)
 {
     if (!ys) return 0;
 
-    log_debug("family_id=%d type=%s addr=%s ifindex=%d",
-        ys->family_id,
-        yamir_type_tostr(type), addr_tostr(msg->ip4_addr), msg->ifindex);
+    log_debug("family_id=%d type=%s(%d) addr=%s ifindex=%d",
+        ys->family_id, yamir_type_tostr(type), type,
+        addr_tostr(msg->ip4_addr), msg->ifindex);
 
     struct genl_request req = { 0 };
     struct nlmsghdr *nlh = &req.n;
@@ -1453,11 +1472,12 @@ static int kyamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *m
     return 0;
 }
 
-// process yamir_msg from kyamir
-static void kyamir_process_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
+// process yamir_msg from kernel space
+static void yamir_process_msg(struct yamir_state *ys, int type, struct yamir_msg *msg)
 {
-    log_debug("type=%s addr=%s ifindex=%d",
-        yamir_type_tostr(type), addr_tostr(msg->ip4_addr), msg->ifindex);
+    log_debug("type=%s(%d) addr=%s ifindex=%d",
+        yamir_type_tostr(type), type,
+        addr_tostr(msg->ip4_addr), msg->ifindex);
 
     switch(type) {
     case YAMIR_RT_NEED:  route_discover(ys, msg); break;
@@ -1540,32 +1560,40 @@ static void kyamir_handle_nlerr(struct yamir_state *ys, struct nlmsghdr *nlh)
 
    log_debug("recv nl-err %d (%s)", err->error, strerror(-err->error));
 
-   struct dymo_rt *dr = route_nlseq_find(ys, nlh->nlmsg_seq);
+   struct dymo_route *dr = route_nlseq_find(ys, nlh->nlmsg_seq);
 
-   if (dr) rtnl_send_done(dr, 0);
+   if (dr) {
+       // netlink msg done
+       rtnl_send_done(dr, 0);
+   }
 }
 
 static void kyamir_handle_nlctrl(struct yamir_state *ys, struct nlmsghdr *nlh) 
 {
+    // get netlink generic family-id
     int rc = parse_family_id(nlh);
-
+    log_debug("family_id=%d", rc);
     if (rc == -1) return;
+
     log_info("+", "Received netlink id %d", rc);
     ys->family_id = rc;
 
-    struct dymo_rt *dr = route_create(ys);
+    // register with kernel module
+    struct dymo_route *dr = route_create(ys);
     if (!dr) return log_error_rv("create route");
 
-    // register with kyamir
+    // reuse DRS_DISCOVER state for register
     dr->state = DRS_DISCOVER;
     struct yamir_msg msg = { 0 };
-    rc = kyamir_send_msg(ys, YAMIR_RT_REG, &msg, &dr->nlseq);
+    rc = yamir_send_msg(ys, YAMIR_RT_REG, &msg, &dr->nlseq);
 
     if (rc == 0) {
-        start_rtnl_timer(dr);
+        // wait for netlink response
+        start_nl_timer(dr);
         return;
     }
 
+    // register failed
     rtnl_send_done(dr, rc);
 }
 
@@ -1581,17 +1609,16 @@ static void kyamir_handle_nldata(struct yamir_state *ys, struct nlmsghdr *nlh)
     struct yamir_msg msg = { 0 };
     if (!parse_genl_attrs(&msg, nlh)) return;
 
-    kyamir_process_msg(ys, type, &msg);
-
+    yamir_process_msg(ys, type, &msg);
 }
 
-// process mmsg from kyamir
+// process mmsg from kernel module
 static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
 {
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
-    log_debug("msg_len=%zu", msg_len);
+    log_debug("mmsg_len=%zu", msg_len);
 
     for (; NLMSG_OK(nlh, msg_len); nlh = NLMSG_NEXT(nlh, msg_len)) {
         log_debug("nlh_type=%u nlh_len=%u", nlh->nlmsg_type, nlh->nlmsg_len);
@@ -1612,7 +1639,7 @@ static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
     }
 }
 
-// recv msgs from kyamir
+// receive msgs from kernel module
 static int kyamir_recv(struct yamir_state *ys)
 {
     int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, MSG_DONTWAIT, NULL);
@@ -1644,7 +1671,7 @@ static void route_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
         if (nlh->nlmsg_type == NLMSG_ERROR) {
             // error/ack message
             struct nlmsgerr *err = NLMSG_DATA(nlh);
-            struct dymo_rt *dr = route_nlseq_find(ys, nlh->nlmsg_seq);
+            struct dymo_route *dr = route_nlseq_find(ys, nlh->nlmsg_seq);
             log_debug("recv nl-err %d (%s)", err->error, strerror(-err->error));
             if (dr) rtnl_send_done(dr, err->error);
             continue;
@@ -1695,7 +1722,7 @@ static int nlh_rta_add(struct nlmsghdr *nlh, size_t maxlen,
  * send rtnetlink message
  * route add dest/prefix dev if metric hop_count via nexthop_addr
  */
-static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr)
+static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_route *dr)
 {
     log_debug("type=%s addr=%s/%d nexthop=%s ifindex=%u dist=%u",
         rtnl_type_tostr(type), addr_tostr(dr->addr), dr->prefix,
@@ -1751,12 +1778,12 @@ static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_rt *dr)
 
     // message sent
     dr->nlseq = nlh->nlmsg_seq;
-    start_rtnl_timer(dr);
+    start_nl_timer(dr);
 
     return 0;
 }
 
-static int resolv_netlink(int fd, const char *name)
+static int resolv_family_id(int fd, const char *name)
 {
     struct genl_request req = {0};
 
@@ -1784,7 +1811,7 @@ static int resolv_netlink(int fd, const char *name)
     return 0;
 }
 
-// setup NETLINK interface to kyamir and linux rtnetlink
+// set up kernel module and rtnetlink interfaces
 static int netlink_init(struct yamir_state *ys)
 {
     log_debug("init kyamir-nl=%d route-nl=%d", NETLINK_GENERIC, NETLINK_ROUTE);
@@ -1802,7 +1829,7 @@ static int netlink_init(struct yamir_state *ys)
     if (ec == -1) return log_errno_rf("bind netlink_yamir");
 
     // resolve netlink family
-    ec = resolv_netlink(ys->kyamir_fd, YAMIR_NL_NAME);
+    ec = resolv_family_id(ys->kyamir_fd, YAMIR_NL_NAME);
     if (ec) return log_errno_rf("resolv_netlink %s", YAMIR_NL_NAME);
 
     // setup interface to kernel routing module
