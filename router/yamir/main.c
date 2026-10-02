@@ -105,11 +105,9 @@ struct yamir_state {
     struct sockaddr_nl yamir_addr;
 
     // linux rtnetlink module
-    uint32_t route_seqno;
+    uint32_t rtnl_seqno;
     int route_fd;
     struct sockaddr_nl route_addr;
-
-    // lists
     struct list_elem routes;
     struct list_elem free_routes;
 
@@ -1442,7 +1440,7 @@ static int yamir_send_msg(struct yamir_state *ys, int type, struct yamir_msg *ms
     nlh->nlmsg_type  = ys->family_id;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_pid   = getpid();
-    nlh->nlmsg_seq   = ys->route_seqno++;
+    nlh->nlmsg_seq   = ys->rtnl_seqno++;
 
     // setup our message
     req.g.cmd = type;
@@ -1744,7 +1742,7 @@ static int rtnl_send_msg(struct yamir_state *ys, int type, struct dymo_route *dr
     nlh->nlmsg_type  = type;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
     nlh->nlmsg_pid   = getpid();
-    nlh->nlmsg_seq   = ys->route_seqno++;
+    nlh->nlmsg_seq   = ys->rtnl_seqno++;
 
     if (type == RTM_NEWROUTE) {
         // NOTE: IPv4 FIB reports this as FIB_EVENT_ENTRY_REPLACE
