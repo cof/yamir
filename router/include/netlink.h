@@ -22,10 +22,10 @@ struct yamir_msg {
     int ifindex;
 };
 
-struct genl_request {
+// generic netlink message - wire format
+struct genl_req {
     struct nlmsghdr n;
     struct genlmsghdr g;
-    // Space for: (attr_hdr + u32) + (attr_hdr + int)
     char buf[64] __attribute__((aligned(4)));
 };
 
@@ -38,10 +38,11 @@ enum {
 
 #define YAMIR_ATTR_MAX (_YAMIR_ATTR_MAX - 1)
 
+// yamir cmd codes
 enum {
-    // sent to kaymir
+    // send to kyamir
     YAMIR_RT_REG   = 0, // register
-    YAMIR_RT_NONE  = 1, // no-route
+    YAMIR_RT_FAIL  = 1, // route discovery failed
     // recv from kyamir
     YAMIR_RT_NEED  = 4, // need-route
     YAMIR_RT_INUSE = 5, // route-inuse
@@ -50,17 +51,17 @@ enum {
     _YAMIR_RT_MAX
 };
 
-static inline const char *yamir_type_tostr(uint32_t type)
+static inline const char *yamir_cmd_tostr(uint32_t cmd)
 {
     static char *names[] = {
         [YAMIR_RT_REG]   = "RT_REG",
-        [YAMIR_RT_NONE]  = "RT_NONE",
+        [YAMIR_RT_FAIL]  = "RT_FAIL",
         [YAMIR_RT_NEED]  = "RT_NEED",
         [YAMIR_RT_INUSE] = "RT_INUSE",
         [YAMIR_RT_ERR]   = "RT_ERR"
     };
 
-    return type < sizeof(names)/ sizeof(names[0]) ? names[type] : "RT_???";
+    return cmd < sizeof(names)/ sizeof(names[0]) ? names[cmd] : "RT_???";
 }
 
 #define YAIMR_RT_MAX (_YAMIR_RT_MAX - 1)

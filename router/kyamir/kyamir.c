@@ -344,16 +344,16 @@ static int yamir_recv_msg(struct kyamir_state *ks,
 {
     pr_debug("nsid=%u portid=%d msg(type=%s(%d) addr=%pI4 ifindex=%d)\n",
         net->ns.inum, portid,
-        yamir_type_tostr(cmd), cmd, &msg->ip4_addr, msg->ifindex);
+        yamir_cmd_tostr(cmd), cmd, &msg->ip4_addr, msg->ifindex);
 
     switch(cmd) {
     case YAMIR_RT_REG:
-        // userspace registered its netlink portid
+        // userspace has registered its netlink portid
         atomic_set(&ks->peer_portid, portid);
         pr_info("userspace registered portid=%d nsid=%u\n", portid, net->ns.inum);
         return 0;
-    case YAMIR_RT_NONE:
-        // userspace reports no route for addr
+    case YAMIR_RT_FAIL:
+        // userspace reports route discovery failed for addr
         if (portid != atomic_read(&ks->peer_portid))
             return -EPERM;
         drop_addr(ks, net, msg->ip4_addr);
@@ -422,13 +422,13 @@ static bool encode_msg(struct sk_buff *skb, int type, struct yamir_msg *msg)
 
 // send msg to userspace
 static int yamir_send_msg(struct kyamir_state *ks,
-    struct net *net, int type, struct yamir_msg *msg)
+    struct net *net, int cmd, struct yamir_msg *msg)
 {
     int portid = atomic_read(&ks->peer_portid);
 
     pr_debug("nsid=%u portid=%d type=%s(%d) addr=%pI4 ifindex=%d\n",
         net->ns.inum, portid,
-        yamir_type_tostr(type), type, &msg->ip4_addr, msg->ifindex);
+        yamir_cmd_tostr(cmd), cmd, &msg->ip4_addr, msg->ifindex);
 
     // check if userspace connected
     if (portid == 0) 
@@ -438,7 +438,7 @@ static int yamir_send_msg(struct kyamir_state *ks,
     if (!skb)
         return -ENOMEM;
 
-    if (!encode_msg(skb, type, msg)) {
+    if (!encode_msg(skb, cmd, msg)) {
         kfree(skb);
         return -EMSGSIZE;
     }
@@ -950,7 +950,7 @@ static const struct genl_ops my_ops[] = {
         .policy  = my_policy,
     },
     {
-        .cmd     = YAMIR_RT_NONE,
+        .cmd     = YAMIR_RT_FAIL,
         .flags   = 0,
         .doit    = kyamir_netlink_recv,
         .flags   = GENL_ADMIN_PERM,
