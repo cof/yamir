@@ -27,7 +27,7 @@ NS2=yamir2
 ADDR_NS1=172.0.0.10
 ADDR_NS2=172.0.0.20
 ADDR_MASK=24
-LOG_LEVEL=3
+LOG_LEVEL=4
 VIRT_LINK=mv1
 # ping
 PING_TIMES=10
@@ -101,27 +101,27 @@ status() {
     dmesg | grep -E 'kyamir.*loaded|kymair.*unloaded'
 }
 
-# reset logs
+# reset debug logs
 reset() {
+    set -x
     > /var/log/$NS1.log
     > /var/log/$NS2.log
+    dmesg -C
 }
 
 # list routes
 route() {
+    set -x
     ip netns exec $NS1 ip route
     ip netns exec $NS2 ip route
 }
 
 # start route discovery
 ping() {
-	# trace commands
-    set -x
-	
 	# run ping in NS1 for addr in NS2
     ip netns exec $NS1 ping -I $IFNAME -c $PING_TIMES -i $PING_INTERVAL -W 1 $ADDR_NS2
 
-    set +x
+    # check ping worked
     rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "ping test failed"
@@ -190,6 +190,7 @@ case "$1" in
     stop)   stop ;;
     status) status ;;
     reset)  reset ;;
+    route)  route ;; 
     ping)   ping ;;
     tcp)    tcp ;; 
     *) echo "Usage: $0 {start|stop|status|route|ping|tcp|reset}" ;;
