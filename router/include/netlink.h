@@ -50,6 +50,19 @@ enum {
     _YAMIR_RT_MAX
 };
 
+static inline const char *yamir_type_tostr(uint32_t type)
+{
+    static char *names[] = {
+        [YAMIR_RT_REG]   = "RT_REG",
+        [YAMIR_RT_NONE]  = "RT_NONE",
+        [YAMIR_RT_NEED]  = "RT_NEED",
+        [YAMIR_RT_INUSE] = "RT_INUSE",
+        [YAMIR_RT_ERR]   = "RT_ERR"
+    };
+
+    return type < sizeof(names)/ sizeof(names[0]) ? names[type] : "RT_???";
+}
+
 #define YAIMR_RT_MAX (_YAMIR_RT_MAX - 1)
 
 #endif
