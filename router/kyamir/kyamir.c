@@ -75,27 +75,49 @@ static int kyamir_exiting = false;
 
 #define KSF_READY (KSF_IFNAME | KSF_IPADDR | KSF_NFHOOK)
 
+static inline const char *fib_evt_tostr(unsigned long event)
+{
+    switch(event) {
+    case FIB_EVENT_ENTRY_ADD: return "ADD";
+    case FIB_EVENT_ENTRY_DEL: return "DEL";
+    case FIB_EVENT_ENTRY_REPLACE: return "REP";
+    default: return "???";
+    }
+}
+
+static inline const char *netdev_evt_tostr(unsigned long event)
+{
+    switch(event) {
+    case NETDEV_UP:         return "NETDEV_UP";
+    case NETDEV_DOWN:       return "NETDEV_DOWN";
+    case NETDEV_REBOOT:     return "NETDEV_REBOOT";
+    case NETDEV_CHANGE:     return "NETDEV_CHANGE";
+    case NETDEV_REGISTER:   return "NETDEV_REGISTER";
+    case NETDEV_UNREGISTER: return "NETDEV_UNREGISTER";
+    default: return "NETDEV_???";
+    }
+}
+
 
 // packets waiting for route discovery
 struct yamir_pending {
     struct hlist_node node;
     struct sk_buff_head packets; // IP paclets
-    __be32 addr;   
     unsigned long ts_added;     // age of  oldest packet
+    __be32 addr;   
 };
 
 struct kyamir_state {
     // packet queue
     struct hlist_head pending[KYAMIR_HASH_BKTS];
     spinlock_t pending_lock;
-    uint32_t pending_count;
-    uint32_t flags;
+    u32 pending_count;
+    u32 flags;
     // netlink
     atomic_t peer_portid;
     // interface
     char ifname[IFNAMSIZ];
     int ifindex;
-    int vaddr;
     __be32 ip4_addr;
     __be32 bcast_addr;
     __be32 addr_mask;
@@ -142,7 +164,7 @@ static const char *hook_tostr(int hook)
 
 static void drop_all(struct net *net, struct sk_buff_head *drop_q)
 {
-    pr_debug("netid=%d drop_q=%u\n", kyamir_netid, skb_queue_len(drop_q));
+    pr_debug("nsid=%u qlen=%u\n", net->ns.inum, skb_queue_len(drop_q));
 
     int num_drop = 0;
     struct sk_buff *skb;
@@ -168,7 +190,7 @@ static void drop_all(struct net *net, struct sk_buff_head *drop_q)
 
 static void send_all(struct net *net, struct sk_buff_head *snd_q)
 {
-    pr_debug("netid=%d snd_q=%u\n", kyamir_netid, skb_queue_len(snd_q));
+    pr_debug("nsid=%u qlen=%u\n", net->ns.inum, skb_queue_len(snd_q));
 
     struct sk_buff *skb;
 
@@ -188,7 +210,7 @@ static void send_all(struct net *net, struct sk_buff_head *snd_q)
 // move all pending packets for addr to dst_q
 static bool drain_pending(struct kyamir_state *ks, struct sk_buff_head *dst_q, __be32 addr)
 {
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
+    pr_debug("addr=%pI4\n",  &addr);
 
     spin_lock_bh(&ks->pending_lock);
 
@@ -232,19 +254,19 @@ static void drain_all(struct kyamir_state *ks, struct sk_buff_head *dst_q)
     spin_unlock_bh(&ks->pending_lock);
 }
 
-// add packet to pending queue
+// add packet to pending queue - return 0 first, >0 more than one, < 0 error
 static int queue_packet(struct kyamir_state *ks,
     struct net *net, struct sk_buff *skb,
     __be32 addr)
 {
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
+    pr_debug("nsid=%u addr=%pI4\n", net->ns.inum, &addr);
 
     spin_lock_bh(&ks->pending_lock);
     
     int rc = 0;
-
-    if (ks->pending_count >= max_qlen) {
-        pr_warn_ratelimited("queue full (%d pkts). Dropping.\n", ks->pending_count);
+    uint32_t pending = ks->pending_count;
+    if (pending >= max_qlen) {
+        pr_warn_ratelimited("queue full (%u pkts). Dropping.\n", pending);
         rc = -ENOBUFS;
         goto drop_unlock;
     }
@@ -272,16 +294,18 @@ static int queue_packet(struct kyamir_state *ks,
     rc = skb_queue_len(&yp->packets);
     __skb_queue_tail(&yp->packets, skb);
     ks->pending_count++;
+    pending = ks->pending_count;
 
 drop_unlock:
     spin_unlock_bh(&ks->pending_lock);
+    pr_debug("nsid=%u pending=%u rc=%d\n", net->ns.inum, pending, rc);
 
     return rc;
 }
 
 static void drop_addr(struct kyamir_state *ks, struct net *net, uint32_t addr)
 {
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
+    pr_debug("nsid=%u addr=%pI4\n", net->ns.inum, &addr);
 
     // gather packets
     struct sk_buff_head drop_q;
@@ -303,7 +327,7 @@ static void flush_all(struct kyamir_state *ks, struct net *net)
 
 static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
 {
-    pr_debug("netid=%d addr=%pI4\n", kyamir_netid, &addr);
+    pr_debug("nsid=%u addr=%pI4\n", net->ns.inum, &addr);
 
     // gather packets
     struct sk_buff_head send_q;
@@ -313,13 +337,14 @@ static void send_addr(struct kyamir_state *ks, struct net *net, __be32 addr)
     send_all(net, &send_q);
 }
 
-// receive msg from userspace
+// receive yamir_msg from userspace
 static int yamir_recv_msg(struct kyamir_state *ks,
     struct net *net, int portid,
     int cmd, struct yamir_msg *msg)
 {
-    pr_debug("portid=%d cmd=%d msg(addr=%pI4 ifindex=%d)\n",
-        portid, cmd, &msg->ip4_addr, msg->ifindex);
+    pr_debug("nsid=%u portid=%d msg(type=%s(%d) addr=%pI4 ifindex=%d)\n",
+        net->ns.inum, portid,
+        yamir_type_tostr(cmd), cmd, &msg->ip4_addr, msg->ifindex);
 
     switch(cmd) {
     case YAMIR_RT_REG:
@@ -355,10 +380,8 @@ static bool decode_msg(struct yamir_msg *msg, struct genl_info *info)
     return fields == 2;
 }
 
-static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
+static int kyamir_netlink_recv(struct sk_buff *skb, struct genl_info *info)
 {
-    pr_debug("netid=%d\n", kyamir_netid);
-
     struct net *net = genl_info_net(info);
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (unlikely(!ks))
@@ -368,7 +391,7 @@ static int netlink_recv_skb(struct sk_buff *skb, struct genl_info *info)
     int portid = info->snd_portid;
     int cmd = info->genlhdr->cmd;
 
-    pr_debug("netid=%d nsid=%u pid=%d cmd=%d\n", kyamir_netid, net->ns.inum, portid, cmd);
+    pr_debug("nsid=%u portid=%d cmd=%d\n", net->ns.inum, portid, cmd);
 
     if (!decode_msg(&msg, info))
         return -EINVAL;
@@ -403,9 +426,9 @@ static int yamir_send_msg(struct kyamir_state *ks,
 {
     int portid = atomic_read(&ks->peer_portid);
 
-    pr_debug("netid=%d portid=%d type=%d addr=%pI4 ifindex=%d\n",
-        kyamir_netid, portid, type,
-        &msg->ip4_addr, msg->ifindex);
+    pr_debug("nsid=%u portid=%d type=%s(%d) addr=%pI4 ifindex=%d\n",
+        net->ns.inum, portid,
+        yamir_type_tostr(type), type, &msg->ip4_addr, msg->ifindex);
 
     // check if userspace connected
     if (portid == 0) 
@@ -445,7 +468,7 @@ static int kyamir_netlink_notify(struct notifier_block *block,
     if (!portid || portid != atomic_read(&ks->peer_portid))
         return NOTIFY_DONE;
 
-    pr_debug("event=%lu netid=%d nsid=%u pid=%d\n", event, kyamir_netid, net->ns.inum, portid);
+    pr_debug("portid=%d event=%lu nsid=%u\n", portid, event, net->ns.inum);
 
     switch(event) {
     case NETLINK_URELEASE:
@@ -466,12 +489,6 @@ static struct notifier_block kyamir_netlink_notifier = {
 // netfilter hook - IP packet coming into stack
 static unsigned int do_kyamir_nf(struct sk_buff *skb, const struct nf_hook_state *state)
 {
-    pr_debug("kyamir: nf-hook netid=%d nsid=%u hook=%d/%s in=%d out=%d\n",
-        kyamir_netid, state->net->ns.inum,
-        state->hook, hook_tostr(state->hook),
-        state->in  ? state->in->ifindex  : -1,
-        state->out ? state->out->ifindex : -1);
-
     // accept if not skb
     int rc = NF_ACCEPT;
     if (kyamir_exiting) return rc;
@@ -485,9 +502,6 @@ static unsigned int do_kyamir_nf(struct sk_buff *skb, const struct nf_hook_state
     uint32_t flags = READ_ONCE(ks->flags);
     int portid = atomic_read(&ks->peer_portid);
 
-    pr_debug("kyamir: nf-hook netid=%d state: flags=0x%x portid=%d ifindex=%d\n",
-        kyamir_netid, flags, portid, ks->ifindex);
-
     // KSF and netlink must be up
     if ((flags & KSF_READY) != KSF_READY) return rc;
     if (portid == 0) return rc;
@@ -497,8 +511,6 @@ static unsigned int do_kyamir_nf(struct sk_buff *skb, const struct nf_hook_state
     struct iphdr *iph = ip_hdr(skb);
     if (iph->version != 4 || iph->ihl < 5) return rc;
 
-    pr_debug("kyamir: nf-hook netid=%d pkt: saddr=%pI4 daddr=%pI4\n",
-        kyamir_netid,  &iph->saddr, &iph->daddr);
 
     if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) return rc;
     if (!pskb_may_pull(skb, iph->ihl * 4)) return rc;
@@ -514,8 +526,10 @@ static unsigned int do_kyamir_nf(struct sk_buff *skb, const struct nf_hook_state
         }
     }
 
-    pr_debug("kyamir: nf-hook netid=%d fire: saddr=%pI4 daddr=%pI4\n",
-        kyamir_netid, &iph->saddr, &iph->daddr);
+    // firing
+    pr_debug("nsid=%u hook=%s(%d) flags=0x%x proto=%d saddr=%pI4 daddr=%pI4\n",
+        state->net->ns.inum, hook_tostr(state->hook), state->hook,
+        flags, iph->protocol, &iph->saddr, &iph->daddr);
 
     struct yamir_msg msg;
     const struct net_device *dev;
@@ -654,7 +668,7 @@ static struct nf_hook_ops kyamir_hook_ops[] = {
 // unregister all netfilter hooks
 static void unreg_nf_hooks(struct kyamir_state *ks, struct net *net)
 {
-    pr_debug("netid=%d nsid=%u\n", kyamir_netid,  net->ns.inum);
+    pr_debug("nsid=%u\n", net->ns.inum);
 
     int i = ARRAY_SIZE(kyamir_hook_ops);
     while (i > 0) {
@@ -673,7 +687,7 @@ static void unreg_nf_hooks(struct kyamir_state *ks, struct net *net)
 // register all netfilter hooks (after device loaded)
 static int reg_nf_hooks(struct kyamir_state *ks, struct net *net)
 {
-    pr_debug("netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
+    pr_debug("nsid=%u\n", net->ns.inum);
 
     int rc = 0, i;
     for (i = 0; i < ARRAY_SIZE(kyamir_hook_ops); i++) {
@@ -699,11 +713,9 @@ static int reg_nf_hooks(struct kyamir_state *ks, struct net *net)
     return rc;
 }
 
-static int my_fib_event(struct notifier_block *nb, unsigned long event, void *ptr) 
+static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void *ptr) 
 {
-    pr_debug("netid=%d event=%lu\n", kyamir_netid, event);
-
-    // check if route entry event
+    // accept only route entry events
     switch(event) {
     case FIB_EVENT_ENTRY_ADD:
     case FIB_EVENT_ENTRY_DEL:
@@ -725,8 +737,10 @@ static int my_fib_event(struct notifier_block *nb, unsigned long event, void *pt
     if (!ks)
         return NOTIFY_DONE;
 
-    // IPv4 dst is host-order
+    // fib dst is host-order
     __be32 dst = cpu_to_be32(info->dst);
+	pr_debug("nsid=%u event=%s(%lu) dst=%pI4\n",
+        net->ns.inum, fib_evt_tostr(event), event, &dst);
 
     switch (event) {
     case FIB_EVENT_ENTRY_ADD:
@@ -744,16 +758,16 @@ static int my_fib_event(struct notifier_block *nb, unsigned long event, void *pt
 }
 
 static struct notifier_block my_fib_nb = {
-    .notifier_call = my_fib_event,
+    .notifier_call = kyamir_fib_event,
 };
 
 
 static void load_addr(struct kyamir_state *ks,
     struct in_ifaddr *ifa, struct net *net)
 {
-    pr_info("addr=%pI4 bcast=%pI4 mask=%pI4 nsid=%u\n",
-        &ifa->ifa_local, &ifa->ifa_broadcast,
-        &ifa->ifa_mask, net->ns.inum);
+    pr_info("nsid=%u addr=%pI4 bcast=%pI4 mask=%pI4\n",
+        net->ns.inum,
+        &ifa->ifa_local, &ifa->ifa_broadcast, &ifa->ifa_mask);
 
     ks->ip4_addr   = ifa->ifa_local;
     ks->bcast_addr = ifa->ifa_broadcast;
@@ -761,23 +775,27 @@ static void load_addr(struct kyamir_state *ks,
     ks->flags |= KSF_IPADDR;
 }
 
-static int my_inet_event(struct notifier_block *nb, unsigned long event, void *ptr)
+static int kyamir_inet_event(struct notifier_block *nb, unsigned long event, void *ptr)
 {
     struct in_ifaddr *ifa = (struct in_ifaddr *) ptr;
 
     if (!ifa || !ifa->ifa_dev || !ifa->ifa_dev->dev) 
         return NOTIFY_DONE;
 
-    // fetch state
+    // fetch inet device state
     struct net_device *dev = ifa->ifa_dev->dev;
+    if (strcmp(dev->name, ifname))
+        return NOTIFY_DONE;
+
+    // fetch module state
     struct net *net = dev_net(dev);
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks)
         return NOTIFY_DONE;
 
-    bool add_addr = event == NETDEV_UP || event == NETDEV_CHANGE;
+    pr_debug("nsid=%u event=%s(%ld)\n", net->ns.inum, netdev_evt_tostr(event), event);
 
-    if (add_addr && !strcmp(dev->name, ifname)) {
+    if (event == NETDEV_UP || event == NETDEV_CHANGE) {
         load_addr(ks, ifa, net);
     }
 
@@ -785,7 +803,7 @@ static int my_inet_event(struct notifier_block *nb, unsigned long event, void *p
 }
 
 static struct notifier_block my_inet_nb = {
-    .notifier_call = my_inet_event,
+    .notifier_call = kyamir_inet_event,
 };
 
 static void unload_device(struct kyamir_state *ks,
@@ -802,13 +820,13 @@ static void unload_device(struct kyamir_state *ks,
     }
 }
 
+// update interface state
 static void load_device(struct kyamir_state *ks,
     struct net_device *dev, struct net *net)
 {
-    pr_info("ifname=%s ifindex=%d nsid=%u\n",
-        dev->name, dev->ifindex, net->ns.inum);
+    pr_info("nsid=%u ifname=%s ifindex=%d\n",
+        net->ns.inum, dev->name, dev->ifindex);
 
-    // update interface state
     strscpy(ks->ifname, dev->name, sizeof(ks->ifname));
     ks->ifindex = dev->ifindex;
     WRITE_ONCE(ks->flags, READ_ONCE(ks->flags) | KSF_IFNAME);
@@ -825,19 +843,22 @@ static void load_device(struct kyamir_state *ks,
     reg_nf_hooks(ks, net);
 }
 
-static int my_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
+static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
 {
-    // get state
+    // get device state
     struct net_device *dev = netdev_notifier_info_to_dev(ptr);
-    if (!dev) return NOTIFY_DONE;
-    struct net *net = dev_net(dev);
-    if (!net) return NOTIFY_DONE;
-    struct kyamir_state *ks = net_generic(net, kyamir_netid);
-    if (!ks) return NOTIFY_DONE;
-    if (strcmp(dev->name, ifname)) 
-        return NOTIFY_DONE;
+    if (!dev || strcmp(dev->name, ifname))
+		return NOTIFY_DONE;
 
-    pr_debug("event=%ld netid=%d nsid=%u\n", event, kyamir_netid, net->ns.inum);
+    // get module state
+    struct net *net = dev_net(dev);
+    if (!net)
+		return NOTIFY_DONE;
+    struct kyamir_state *ks = net_generic(net, kyamir_netid);
+    if (!ks)
+		return NOTIFY_DONE;
+
+    pr_debug("nsid=%u event=%ld\n", net->ns.inum, event);
 
     switch(event) {
     case NETDEV_REGISTER:
@@ -853,12 +874,12 @@ static int my_netdev_event(struct notifier_block *nb, unsigned long event, void 
 }
 
 static struct notifier_block my_netdev_nb = {
-    .notifier_call = my_netdev_event,
+    .notifier_call = kyamir_netdev_event,
 };
 
-static void __net_exit my_exit_net(struct net *net)
+static void __net_exit kyamir_net_exit(struct net *net)
 {
-    pr_debug("entry netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
+    pr_debug("nsid=%u\n", net->ns.inum);
 
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks) return;
@@ -869,14 +890,12 @@ static void __net_exit my_exit_net(struct net *net)
 
     unregister_fib_notifier(net, &my_fib_nb);
 
-    pr_debug("EXIT netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
-
     return;
 }
 
-static int __net_init my_init_net(struct net *net)
+static int __net_init kyamir_net_init(struct net *net)
 {
-    pr_debug("ENTRY netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
+    pr_debug("nsid=%u\n", net->ns.inum);
 
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks)
@@ -895,19 +914,18 @@ static int __net_init my_init_net(struct net *net)
     ks->ifname[0] = '\0';
     ks->flags = 0;
 
+	// add fib event tracker
     int rc = register_fib_notifier(net, &my_fib_nb, NULL, NULL);
     if (rc < 0) {
         pr_err("register-fib failed");
     }
 
-    pr_debug("EXIT netid=%d nsid=%u\n", kyamir_netid, net->ns.inum);
-
     return rc;
 }
 
 static struct pernet_operations my_net_ops = {
-    .init = my_init_net,
-    .exit = my_exit_net,
+    .init = kyamir_net_init,
+    .exit = kyamir_net_exit,
     .id   = &kyamir_netid,
     .size = sizeof(struct kyamir_state),
 };
@@ -927,14 +945,14 @@ static const struct genl_ops my_ops[] = {
     {
         .cmd     = YAMIR_RT_REG,
         .flags   = 0,
-        .doit    = netlink_recv_skb,
+        .doit    = kyamir_netlink_recv,
         .flags   = GENL_ADMIN_PERM,
         .policy  = my_policy,
     },
     {
         .cmd     = YAMIR_RT_NONE,
         .flags   = 0,
-        .doit    = netlink_recv_skb,
+        .doit    = kyamir_netlink_recv,
         .flags   = GENL_ADMIN_PERM,
         .policy  = my_policy,
     },
