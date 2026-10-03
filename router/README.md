@@ -112,8 +112,8 @@ To control the MANET use create_manet.sh script
 	yamir2 (id: 1)
 	yamir1 (id: 0)
 	== yamird ==
-	11361 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 3
-	11363 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 3
+	11361 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 4
+	11363 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 4
 	== kyamir ==
 	[19080.775474] kyamir: kyamir_init: loaded netid=11
 	== yamir1: route proto 200 ==
