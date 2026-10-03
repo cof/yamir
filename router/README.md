@@ -53,8 +53,9 @@ yamird uses
 - Timer API with ms resolution for DYMO timeouts
 - levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
 - poll driven I/O
-- rtnetlink, generic netlink and UDP sockets
-- sendto and sendmsg for pdu transmission
+- rtnetlink socket to install routes, tagged with proto 200
+- generic netlink socket to send/recv kernel messages
+- UDP socket for send/recv dymo messages 
 - recvmmsg for batched reads with IP_PKTINFO info
 
 ## Testing
@@ -76,8 +77,10 @@ To control the MANET use create_manet.sh script
 
 - start: starts the MANET
 - stop: stops the MANET
-- ping: starts route discovery
-- status: report yamir,kyamird status
+- route: show manet routes
+- ping: run ping test
+- tcp: run tcp test
+- status: report yamird,kyamir status
 - reset: clears log files
 
 **Example: Starting the MANET**
