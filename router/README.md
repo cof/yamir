@@ -104,7 +104,22 @@ To control the MANET use create_manet.sh script
     + ip netns exec yamir1 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 4
     + ip netns exec yamir2 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 4
 
-**Example: Start route discovery**
+
+**Example: Checking status**
+
+	$ doas ./create_manet.sh status
+	== namespaces ==
+	yamir2 (id: 1)
+	yamir1 (id: 0)
+	== yamird ==
+	11361 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 3
+	11363 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 3
+	== kyamir ==
+	[19080.775474] kyamir: kyamir_init: loaded netid=11
+	== yamir1: route proto 200 ==
+	== yamir2: route proto 200 ==
+
+**Example: Ping test**
 
     $ doas ./create_manet.sh ping
     + ip netns exec yamir1 ping -I wlan0 -c 10 -i 0.1 -W 1 172.0.0.20

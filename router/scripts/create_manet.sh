@@ -98,8 +98,13 @@ stop()
 }
 
 status() {
+	echo "== namespaces =="
+	ip netns list | grep -E "^($NS1|$NS2)\b"
+	echo "== yamird =="
     pgrep -af $YAMIRD
-    dmesg | grep -E 'kyamir.*loaded|kymair.*unloaded'
+	echo "== kyamir =="
+    dmesg | grep -E 'kyamir.*(loaded|unloaded)'
+	yamir_routes
 }
 
 # reset debug logs
@@ -110,12 +115,17 @@ reset() {
     dmesg -C
 }
 
-# list routes
-route() {
+yamir_routes() {
     for ns in "$NS1" "$NS2"; do
-        echo "== $ns: routes:$RTM_PROTO =="
+        echo "== $ns: route proto $RTM_PROTO =="
         ip -n "$ns" route show proto $RTM_PROTO
-        echo "== $ns: routes:all =="
+    done
+}
+
+# list routes
+routes() {
+    for ns in "$NS1" "$NS2"; do
+        echo "== $ns: routes =="
         ip -n "$ns" route 
     done
 }
@@ -194,7 +204,7 @@ case "$1" in
     stop)   stop ;;
     status) status ;;
     reset)  reset ;;
-    route)  route ;; 
+    routes) routes ;; 
     ping)   ping ;;
     tcp)    tcp ;; 
     *) echo "Usage: $0 {start|stop|status|route|ping|tcp|reset}" ;;
