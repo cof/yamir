@@ -27,8 +27,9 @@ NS2=yamir2
 ADDR_NS1=172.0.0.10
 ADDR_NS2=172.0.0.20
 ADDR_MASK=24
-LOG_LEVEL=4
+LOG_LEVEL=3
 VIRT_LINK=mv1
+RTM_PROTO=200
 # ping
 PING_TIMES=10
 PING_INTERVAL=0.1
@@ -111,9 +112,12 @@ reset() {
 
 # list routes
 route() {
-    set -x
-    ip netns exec $NS1 ip route
-    ip netns exec $NS2 ip route
+    for ns in "$NS1" "$NS2"; do
+        echo "== $ns: routes:$RTM_PROTO =="
+        ip -n "$ns" route show proto $RTM_PROTO
+        echo "== $ns: routes:all =="
+        ip -n "$ns" route 
+    done
 }
 
 # start route discovery
