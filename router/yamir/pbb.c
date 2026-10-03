@@ -515,6 +515,10 @@ static int dec_pbb_msg(struct pkt_buf *pkb, struct pbb_msg *msg)
     if (dec_msg_tlvs(&msg_buf, msg)) return -1;
     if (dec_pbb_nodes(&msg_buf, msg)) return -1;
 
+    // fix up node ptrs
+    if (msg->num_node > 0) msg->target = &msg->nodes[0];
+    if (msg->num_node > 1) msg->origin = &msg->nodes[1];
+
     return 0;
 }
 

@@ -304,7 +304,6 @@ struct pbb_msg {
     uint8_t num_tlv;
     // well know tlv fields
     uint32_t did;
-    // address extracted from address blocks
     struct pbb_node *target;
     struct pbb_node *origin;
     // additional nodes
@@ -335,8 +334,8 @@ static inline void pbb_msg_reset(struct pbb_msg *msg)
     msg->num_tlv = 0;
     msg->did = 0;
 
-    msg->target = 0;
-    msg->origin = 0;
+    msg->target = NULL;
+    msg->origin = NULL;
 }
 
 static inline bool pbb_msg_orig(const struct pbb_msg *msg)
