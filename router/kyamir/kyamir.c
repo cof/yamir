@@ -739,7 +739,7 @@ static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void
 
     // fib dst is host-order
     __be32 dst = cpu_to_be32(info->dst);
-	pr_debug("nsid=%u event=%s(%lu) dst=%pI4\n",
+    pr_debug("nsid=%u event=%s(%lu) dst=%pI4\n",
         net->ns.inum, fib_evt_tostr(event), event, &dst);
 
     switch (event) {
@@ -848,15 +848,15 @@ static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, v
     // get device state
     struct net_device *dev = netdev_notifier_info_to_dev(ptr);
     if (!dev || strcmp(dev->name, ifname))
-		return NOTIFY_DONE;
+        return NOTIFY_DONE;
 
     // get module state
     struct net *net = dev_net(dev);
     if (!net)
-		return NOTIFY_DONE;
+        return NOTIFY_DONE;
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks)
-		return NOTIFY_DONE;
+        return NOTIFY_DONE;
 
     pr_debug("nsid=%u event=%ld\n", net->ns.inum, event);
 
@@ -914,7 +914,7 @@ static int __net_init kyamir_net_init(struct net *net)
     ks->ifname[0] = '\0';
     ks->flags = 0;
 
-	// add fib event tracker
+    // add fib event tracker
     int rc = register_fib_notifier(net, &my_fib_nb, NULL, NULL);
     if (rc < 0) {
         pr_err("register-fib failed");

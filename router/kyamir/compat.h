@@ -25,7 +25,7 @@ static inline struct net *kyamir_get_net(void) {
     #define KYAMIR_HOOK_CAST (nf_hookfn *)
 #else
     #define KYAMIR_HOOK_CAST (void *)
-	struct nf_hook_state {
+    struct nf_hook_state {
         u8 hook;
         struct net *net;
         struct net_device *in;

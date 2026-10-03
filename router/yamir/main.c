@@ -1,10 +1,11 @@
 
 /*
  * YAMIR - Yet Another MANET IP Router
+ * ===================================
  *
  * This a userspace IP router with
  *
- *  - kyamir updates via netlink-generic
+ *  - receives route updates from kyamir via generic netlink
  *  - route management via rtnetlink
  *  - route discovery via DYMO protocol
  *  - PacketBB codec to read/write messages
@@ -13,8 +14,14 @@
  *
  *  ./yamird -i wlan0
  *
- * Notes:
- * -----
+ * Routes
+ * ------
+ * yamir installs routes with rtm_protocol = YAMIR_RT_PROTO.
+ * kyamir uses the same value to detect if route exists.
+ * See inlude/netlink.h for YAMIR_RT_PROTO.
+ *
+ * Permissions
+ * -----------
  * Running yarmid requires the following permissions
  *
  *  cap_net_bind_service - uses privileled port 269
@@ -963,7 +970,7 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 static int dymo_send_reply(struct yamir_state *ys, struct pbb_msg *req)
 {
     struct pbb_msg msg;
-	struct pbb_msg *reply = &msg;
+    struct pbb_msg *reply = &msg;
 
     pbb_msg_reset(reply);
 
@@ -1129,7 +1136,7 @@ static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
     if (msg->did != ys->node_did) return PBB_MSG_TLV_DID;
     if (yamir_islocaladdr(ys, msg->origin)) return PBB_MSG_OLADDR;
 
-	// ok
+    // ok
     return 0;
 }
 
@@ -1335,7 +1342,7 @@ static int dymo_send_req(struct yamir_state *ys, struct dymo_req *req)
     origin->flags |= PBB_NF_SEQN;
     origin->seqnum = ys->own_seqnum;
 
-	log_debug("send RREQ msg_seq=%u orig_seq=%u src=%s dst=%s hlimit=%d",
+    log_debug("send RREQ msg_seq=%u orig_seq=%u src=%s dst=%s hlimit=%d",
         req->seqnum,
         origin->seqnum,
         addr_tostr(origin->ip4_addr),
