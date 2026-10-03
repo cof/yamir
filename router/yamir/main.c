@@ -134,7 +134,6 @@ enum genl_type {
     GNL_YAMIR
 };
 
-
 // generic netlink messages we send
 struct genl_msg {
     struct list_elem node;
@@ -142,7 +141,7 @@ struct genl_msg {
     enum genl_type type;
     int cmd;
     uint32_t nl_seqno;
-    struct yamir_msg msg;
+    struct yamir_msg ym;
     int nl_timer;
 };
 
@@ -175,13 +174,20 @@ static void genl_send_done(struct genl_msg *msg, int ec)
     switch(msg->type) {
     case GNL_CTRL:
         if (msg->cmd == CTRL_CMD_GETFAMILY) {
-            if (ec) keep_running = 1;
+            if (ec) {
+                log_error("CTRL_CMD_GETFAMILY error=%d", ec);
+                keep_running = 0;
+            }
         }
         break;
     case GNL_YAMIR:
         if (msg->cmd == YAMIR_RT_REG) {
-            log_info("+", "Registered with kyamir %s", ec ? "FAIL" : "OK");
-            if (ec) keep_running = 0;
+            if (ec) {
+                log_error("Register kaymir error=%d", ec);
+                keep_running = 0;
+                break;
+            }
+            log_info("+", "Registered with kyamir");
         }
         break;
     }
@@ -191,8 +197,6 @@ static void genl_send_done(struct genl_msg *msg, int ec)
 
 static struct genl_msg *genl_msg_find(struct yamir_state *ys, uint32_t nl_seqno)
 {
-    log_debug("nl_seqno=%u", nl_seqno);
-
     struct genl_msg *msg;
     list_fornext_entry(&ys->genl_msgs, msg , node) {
         if (msg->nl_seqno == nl_seqno) return msg;
@@ -229,16 +233,29 @@ static inline void stop_nl_timer(struct genl_msg *msg)
     msg->nl_timer = -1;
 }
 
-static void genl_msg_reset(struct genl_msg *gm, enum genl_type type, int cmd)
+static void genl_msg_reset(struct genl_msg *msg, enum genl_type type, int cmd)
 {
-    stop_nl_timer(gm);
+    stop_nl_timer(msg);
 
-    gm->type = type;
-    gm->cmd = cmd;
-    gm->msg.ip4_addr = 0;
-    gm->msg.ifindex = 0;
+    msg->type = type;
+    msg->cmd = cmd;
+    msg->nl_seqno = 0;
+
+    msg->ym.ip4_addr = 0;
+    msg->ym.ifindex = 0;
 }
 
+static inline const char *nlmsg_type_tostr(int type)
+{
+    switch(type) {
+    case NLMSG_NOOP: return "NLMSG_NOOP";
+    case NLMSG_ERROR: return "NLMSG_ERROR";
+    case NLMSG_DONE: return "NLMSG_DONE";
+    case NLMSG_OVERRUN: return "NLMSG_OVERRUN";
+    case GENL_ID_CTRL: return "GENL_ID_CTRL";
+    default: return type < NLMSG_MIN_TYPE ? "NLMSG_???" : "GENL_ID";
+    }
+}
 
 // rtnl error codes
 #define RTNL_OK       0
@@ -403,6 +420,25 @@ static const char *route_tostr(struct dymo_route *dr)
     return buf;
 }
 
+static const char *route_info_tostr(struct dymo_route *route)
+{
+    static char bufs[4][128];
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t size = sizeof(bufs[0]);
+    idx = (idx + 1) & 3;
+
+    if (!route) return "<none>";
+
+    snprintf(buf, size,
+        "addr=%s/%d via %s dev %u",
+        addr_tostr(route->addr), route->prefix,
+        addr_tostr(route->nexthop_addr), route->nexthop_ifindex);
+
+    return buf;
+}
+
 static const char *dymo_msg_tostr(struct pbb_msg *msg)
 {
     static char bufs[4][256];
@@ -457,7 +493,7 @@ static const char *recv_state_tostr(struct recv_state *rs)
 
 static struct dymo_req *dymo_req_find(struct yamir_state *ys, uint32_t addr);
 static void dymo_end_req(struct dymo_req *req, int rc);
-static int kyamir_send_msg(struct genl_msg *gm);
+static int yamir_send_msg(struct genl_msg *gm);
 static int rtnl_send_msg(int cmd_type, struct dymo_route *dr);
 
 // stevens page 533 // see ip 7 IP_PKTINFO
@@ -465,8 +501,6 @@ static int recvfrom_wstate(int fd, size_t vlen,
     struct mmsghdr msgs[static vlen],
     struct recv_state *states)
 {
-    log_debug("fd=%d", fd);
-
     int nr = recvmmsg(fd, msgs, vlen, MSG_DONTWAIT, NULL);
     if (nr == -1 || !states) return nr;
 
@@ -502,8 +536,6 @@ static int recvfrom_wstate(int fd, size_t vlen,
 
 static int netlink_send(int fd, void *data, size_t len)
 {
-    log_debug("fd=%d len=%zu", fd, len);
-
     struct iovec iov = { .iov_base = data, .iov_len =  len };
     struct sockaddr_nl nl_dst = { .nl_family = AF_NETLINK };
 
@@ -522,7 +554,6 @@ static int netlink_send(int fd, void *data, size_t len)
     return 0;
 }
 
-
 static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 {
     (void) ucontext;
@@ -532,46 +563,42 @@ static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 // find route entry with longest prefix match (rfc1812)
 static struct dymo_route *match_route(struct yamir_state *ys, uint32_t addr)
 {
-    log_debug("addr=%s", addr_tostr(addr));
-
-    addr = ntohl(addr);
-    struct dymo_route *match = NULL;
-    struct dymo_route *dr;
-    list_fornext_entry(&ys->routes, dr, node) {
-        log_debug("check-route %s", route_tostr(dr));
-        if (dr->state != DRS_ACTIVE && dr->state != DRS_ADDING) continue;
-        if (!match || dr->prefix > match->prefix) {
-            uint32_t mask = (dr->prefix == 0) ? 0 : (~0U << (32 - dr->prefix));
-            uint32_t raddr = ntohl(dr->addr);
-            if ((addr & mask) == (raddr & mask)) {
-                match = dr;
-            }
+    uint32_t laddr = ntohl(addr);
+    struct dymo_route *match = NULL, *route;
+    list_fornext_entry(&ys->routes, route, node) {
+        // check valid route
+        if (route->state != DRS_ACTIVE && route->state != DRS_ADDING) continue;
+        if (match && route->prefix <= match->prefix) continue;
+        if (route->prefix > 32) continue;
+        // does addr match route prefix
+        uint32_t mask = route->prefix ? ~0U << (32 - route->prefix) : 0;
+        uint32_t raddr = ntohl(route->addr);
+        if ((laddr & mask) == (raddr & mask)) {
+            match = route;
         }
     }
 
-    log_debug("match=%s", route_tostr(match));
+    log_debug("addr=%s match=%s", 
+        addr_tostr(addr), match ? route_tostr(match) : "none");
 
     return match;
 }
 
+// find route by rtnl-seqno
 static struct dymo_route *route_find_nlseq(struct yamir_state *ys, uint32_t nl_seqno)
 {
-    log_debug("nl_seqno=%u", nl_seqno);
-
-    struct dymo_route *dr;
-    list_fornext_entry(&ys->routes, dr, node) {
-        bool is_rtnl = dr->state == DRS_DISCOVER || dr->state == DRS_ADDING || dr->state == DRS_DELETING;
-        if (is_rtnl && dr->nl_seqno == nl_seqno) return dr;
+    struct dymo_route *route;
+    list_fornext_entry(&ys->routes, route, node) {
+        if (route->state != DRS_ADDING && route->state != DRS_DELETING) continue;
+        if (route->nl_seqno == nl_seqno) return route;
     }
 
     return NULL;
 }
 
-// find discovery request
+// find discovery route-request by ip4-addr
 static struct dymo_req *dymo_req_find(struct yamir_state *ys, uint32_t addr)
 {
-    log_debug("addr=%s", addr_tostr(addr));
-
     struct dymo_route *route;
     list_fornext_entry(&ys->routes, route, node) {
         if (route->state == DRS_DISCOVER && route->req.addr == addr) {
@@ -583,18 +610,18 @@ static struct dymo_req *dymo_req_find(struct yamir_state *ys, uint32_t addr)
 }
 
 // section 5.2.1.
-static int node_superior(struct pbb_node *mn, struct dymo_route *dr, int msg_type)
+static bool node_superior(struct pbb_node *mn, struct dymo_route *dr, int msg_type)
 {
     // 1. stale (what's wrong with signed 32 bit)
     if ((int16_t) mn->seqnum - (int16_t) dr->seqnum < 0) {
-        return 0;
+        return false;
     }
 
     // 2. loop possible
     if (mn->seqnum == dr->seqnum &&
        (!pbb_node_dist(mn) || !dr->has_dist || (mn->dist > dr->dist + 1)))
     {
-        return 0;
+        return false;
     }
 
     // 3. inferior or equivalent
@@ -602,10 +629,10 @@ static int node_superior(struct pbb_node *mn, struct dymo_route *dr, int msg_typ
        (((mn->dist == dr->dist + 1) && !dr->is_broken) ||
        (mn->dist == dr->dist && msg_type == DYMO_RREQ && !dr->is_broken)))
     {
-        return 0;
+        return false;
     }
 
-    return 1;
+    return true;
 }
 
 static void route_delete(struct dymo_route *dr);
@@ -825,14 +852,14 @@ static void rtnl_send_done(struct dymo_route *dr, int rc)
             route_free(dr);
             break;
         }
-        log_info("+", "Added route %s", route_tostr(dr));
+        log_info("+", "Added route %s", route_info_tostr(dr));
         dr->state = DRS_ACTIVE;
         break;
 
     case DRS_DELETING:
         stop_rtnl_timer(dr);
         if (rc == 0) {
-            log_info("+", "Deleted route %s", route_tostr(dr));
+            log_info("+", "Deleted route %s", route_info_tostr(dr));
         }
         if (dr->is_broken) {
             dr->state = DRS_NONE;
@@ -855,42 +882,42 @@ static bool route_update(struct yamir_state *ys,
         addr_tostr(mn->ip4_addr), addr_tostr(nexthop_addr),
         nexthop_ifindex);
 
-    struct dymo_route *dr = match_route(ys, mn->ip4_addr);
+    struct dymo_route *route = match_route(ys, mn->ip4_addr);
 
-    if (dr) {
-        if (!node_superior(mn, dr, msg_type))
+    if (route) {
+        if (!node_superior(mn, route, msg_type))
             return false;
-        route_stop_timers(dr);
+        route_stop_timers(route);
     }
     else {
-        dr = route_create(ys);
+        route = route_create(ys);
     }
 
     // update route entry - 5.2.2
-    dr->created_ts = get_now_ms();
-    dr->addr = mn->ip4_addr;
+    route->created_ts = get_now_ms();
+    route->addr = mn->ip4_addr;
 
     // always set prefix field
-    dr->prefix = mn->prefix;
+    route->prefix = mn->prefix;
     if (pbb_node_seqn(mn))
-        dr->seqnum = mn->seqnum;
-    dr->nexthop_addr = nexthop_addr;
-    dr->nexthop_ifindex = nexthop_ifindex;
-    dr->is_broken  = 0;
+        route->seqnum = mn->seqnum;
+    route->nexthop_addr = nexthop_addr;
+    route->nexthop_ifindex = nexthop_ifindex;
+    route->is_broken  = 0;
 
     // route is consider superior so always set the distance
-    dr->has_dist = 0;
+    route->has_dist = 0;
     if (pbb_node_dist(mn)) {
-        dr->has_dist = 1;
-        dr->dist = mn->dist;
+        route->has_dist = 1;
+        route->dist = mn->dist;
     }
 
-    int rc = rtnl_add_route(dr);
+    int rc = rtnl_add_route(route);
     if (rc) return false;
 
     // start route timers
-    dr->age_timer = timer_add(&ys->timers, DR_AGE_MIN, age_timeout_cb, dr);
-    dr->seqnum_timer = timer_add(&ys->timers, DR_SEQNUM_AGE_MAX, seqnum_timeout_cb, dr);
+    route->age_timer = timer_add(&ys->timers, DR_AGE_MIN, age_timeout_cb, route);
+    route->seqnum_timer = timer_add(&ys->timers, DR_SEQNUM_AGE_MAX, seqnum_timeout_cb, route);
 
     return true;
 }
@@ -908,8 +935,6 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 {
     static unsigned char wbuf[WBUF_SIZE];
 
-    log_debug("dst=%s msg=(%s)", addr_tostr(addr), dymo_msg_tostr(msg));
-
     struct pkt_buf buf = PKB_INIT(wbuf, sizeof(wbuf));
     struct pbb_hdr hdr = { 0 };
 
@@ -920,16 +945,16 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
     // TODO implement rfc5148 jitter
 
     struct sockaddr_in sin;
-    memset(&sin, 0, sizeof(addr));
+    memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = addr;
     sin.sin_port = htons(DYMO_PORT);
     size_t len = pkb_pos(&buf);
 
-    log_debug("sendto pkt_len=%zu dst=%s", len, sockaddr_tostr(&sin));
+    log_debug("sendto dst=%s len=%zu", sockaddr_tostr(&sin), len);
 
     ssize_t rc = sendto(ys->dymo_fd, wbuf, len, 0, (struct sockaddr *) &sin, sizeof(sin));
-    if (rc == -1) return log_errno_rf("send_msg");
+    if (rc == -1) return log_errno_rf("sendto fd=%d len=%zu", ys->dymo_fd, len);
 
     return 0;
 }
@@ -937,37 +962,41 @@ static int dymo_send_msg(struct yamir_state *ys, struct pbb_msg *msg, uint32_t a
 // 5.3.2 (send reply back to request originator)
 static int dymo_send_reply(struct yamir_state *ys, struct pbb_msg *req)
 {
-    log_debug("req=(%s)", dymo_msg_tostr(req));
+    struct pbb_msg msg;
+	struct pbb_msg *reply = &msg;
 
-    struct pbb_msg reply;
+    pbb_msg_reset(reply);
 
-    pbb_msg_reset(&reply);
+    reply->type = DYMO_RREP;
+    struct pbb_node *target = pbb_copy_node(reply, req->origin);
+    struct pbb_node *origin = pbb_copy_node(reply, req->target);
 
-    reply.type = DYMO_RREP;
+    struct dymo_route *route = match_route(ys, target->ip4_addr);
+    if (!route) return log_error_rf("No route to target");
 
-    // TODO get these values from routing table ?
-    reply.target = pbb_copy_node(&reply, req->origin);
-    reply.origin = pbb_copy_node(&reply, req->target);
-
-    struct dymo_route *dr = match_route(ys, reply.target->ip4_addr);
-    if (!dr) return log_error_rf("No route to target");
-
-    if (!pbb_node_seqn(reply.target) ||
-        ((int16_t) reply.target->seqnum - (int16_t) ys->own_seqnum < 0) ||
-        (reply.target->seqnum == ys->own_seqnum && !pbb_node_dist(reply.origin)))
+    if (!pbb_node_seqn(target) ||
+        ((int16_t) target->seqnum - (int16_t) ys->own_seqnum < 0) ||
+        (target->seqnum == ys->own_seqnum && !pbb_node_dist(origin)))
     {
         yamir_inc_seqnum(ys);
     }
 
-    reply.origin->seqnum = ys->own_seqnum;
-    reply.origin->flags |= PBB_NF_SEQN;
+    origin->seqnum = ys->own_seqnum;
+    origin->flags |= PBB_NF_SEQN;
 
-    reply.hop_limit = MSG_HOPLIMIT;
-    reply.flags |= PBB_MF_HLIM;
-    reply.addr_len = 4;
+    reply->hop_limit = MSG_HOPLIMIT;
+    reply->flags |= PBB_MF_HLIM;
+    reply->addr_len = 4;
+
+    log_debug("send RREP msg_seq=%u targ_seq=%u dest=%s nexthop=%s hlimit=%d",
+        reply->seq_num,
+        origin->seqnum,
+        addr_tostr(target->ip4_addr),
+        addr_tostr(route->nexthop_addr),
+        reply->hop_limit);
 
     // we route the message via the next hop
-    return dymo_send_msg(ys, &reply, dr->nexthop_addr);
+    return dymo_send_msg(ys, reply, route->nexthop_addr);
 }
 
 static int dymo_recv_reply(struct yamir_state *ys, struct pbb_msg *reply)
@@ -1068,17 +1097,20 @@ static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_
     }
 
     // check if must discard
-    if (!dec_hop_limit(rmsg)) return 0;
+    if (!dec_hop_limit(rmsg))
+        return 0;
 
     // replies or unicast requests always sent via next hop addr
     uint32_t dst_addr;
     if (rmsg->type == DYMO_RREP || is_unicast(rs->daddr)) {
         // need check if rm can be routed towards target
         struct pbb_node *target = rmsg->target;
-        struct dymo_route *dr = match_route(ys, target->ip4_addr);
-        if (!dr) return dymo_rerr_send(ys, target->ip4_addr, target->seqnum, target->prefix);
-        if (dr->is_broken) return dymo_rerr_send(ys, target->ip4_addr, dr->seqnum, target->prefix);
-        dst_addr = dr->nexthop_addr;
+        struct dymo_route *route = match_route(ys, target->ip4_addr);
+        if (!route) 
+            return dymo_rerr_send(ys, target->ip4_addr, target->seqnum, target->prefix);
+        if (route->is_broken)
+            return dymo_rerr_send(ys, target->ip4_addr, route->seqnum, target->prefix);
+        dst_addr = route->nexthop_addr;
     }
     else {
         dst_addr = ys->mcast_addr;
@@ -1087,7 +1119,6 @@ static int relay_rmsg(struct yamir_state *ys, struct pbb_msg *rmsg, struct recv_
     return dymo_send_msg(ys, rmsg, dst_addr);
 }
 
-// check valid route-message
 static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
 {
     // check required fields present
@@ -1098,32 +1129,12 @@ static int validate_msg(struct yamir_state *ys, struct pbb_msg *msg)
     if (msg->did != ys->node_did) return PBB_MSG_TLV_DID;
     if (yamir_islocaladdr(ys, msg->origin)) return PBB_MSG_OLADDR;
 
+	// ok
     return 0;
-}
-
-// fixup target,origin nodes
-static int fixup_nodes(struct pbb_msg *msg)
-{
-    int skip = 0;
-
-    if (msg->num_node > 0) {
-        msg->target = &msg->nodes[0];
-        skip++;
-    }
-
-    if (msg->num_node > 1) {
-        msg->origin = &msg->nodes[1];
-        skip++;
-    }
-
-    return skip;
 }
 
 static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv_state *rs)
 {
-    int skip = fixup_nodes(rreq);
-    log_debug("rs=(%s) rreq(%s)", recv_state_tostr(rs), dymo_msg_tostr(rreq));
-
     // check required fields present
     int rc = validate_msg(ys, rreq);
     if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
@@ -1131,7 +1142,7 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
     int orig_superior = route_update(ys, rreq->type, rreq->origin, rs->saddr, rs->ifindex);
 
     // additional nodes
-    for (int i = skip; i < rreq->num_node; i++) {
+    for (int i = 2; i < rreq->num_node; i++) {
         struct pbb_node *mn = &rreq->nodes[i];
         if (!route_update(ys, rreq->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
@@ -1139,7 +1150,9 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
         }
     }
 
-    if (!orig_superior) return 0;
+    if (!orig_superior) {
+        return 0;
+    }
 
     // relay request-msg if not for us
     if (!yamir_islocaladdr(ys, rreq->target)) {
@@ -1152,9 +1165,6 @@ static int handle_rreq(struct yamir_state *ys, struct pbb_msg *rreq, struct recv
 
 static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv_state *rs)
 {
-    int skip = fixup_nodes(rrep);
-    log_debug("rs(%s) msg(%s)", recv_state_tostr(rs), dymo_msg_tostr(rrep));
-
     // check required fields present
     int rc = validate_msg(ys, rrep);
     if (rc) return log_debug_rc(rc, "invalid msg %s", pbb_field_tostr(rc));
@@ -1162,7 +1172,7 @@ static int handle_rrep(struct yamir_state *ys, struct pbb_msg *rrep, struct recv
     bool orig_superior = route_update(ys, rrep->type, rrep->origin, rs->saddr, rs->ifindex);
 
     // additional nodes
-    for (int i = skip; i < rrep->num_node; i++) {
+    for (int i = 2; i < rrep->num_node; i++) {
         struct pbb_node *mn = &rrep->nodes[i];
         if (!route_update(ys, rrep->type, mn, rs->saddr, rs->ifindex)) {
             mn->flags |= PBB_NF_SKIP;
@@ -1256,16 +1266,16 @@ static void dymo_req_timeout(void *arg);
 // tell kernel module discovery failed
 static void discovery_failed(struct yamir_state *ys, uint32_t addr, int ifindex)
 {
-    struct genl_msg *gm = genl_msg_create(ys, GNL_YAMIR, YAMIR_RT_FAIL);
-    if (!gm) return log_error_rv("create YAMIR_RT_FAIL");
+    struct genl_msg *msg = genl_msg_create(ys, GNL_YAMIR, YAMIR_RT_FAIL);
+    if (!msg) return log_error_rv("create YAMIR_RT_FAIL");
 
-    struct yamir_msg *ym = &gm->msg;
+    struct yamir_msg *ym = &msg->ym;
     ym->ip4_addr = addr;
     ym->ifindex  = ifindex;
 
-    int rc = kyamir_send_msg(gm);
+    int rc = yamir_send_msg(msg);
     if (rc) {
-        genl_send_done(gm, rc);
+        genl_send_done(msg, rc);
     }
 }
 
@@ -1289,11 +1299,8 @@ static void dymo_end_req(struct dymo_req *req, int rc)
     route_free(route);
 }
 
-static int dymo_send_request(struct yamir_state *ys, struct dymo_req *req)
+static int dymo_send_req(struct yamir_state *ys, struct dymo_req *req)
 {
-    log_debug("addr=%s seqnum=%u hcount=%d hlimit=%d",
-        addr_tostr(req->addr), req->seqnum, req->hop_count, MSG_HOPLIMIT);
-
     struct pbb_msg msg;
     pbb_msg_reset(&msg);
 
@@ -1310,6 +1317,7 @@ static int dymo_send_request(struct yamir_state *ys, struct dymo_req *req)
     if (!target) return log_error_rf("Add target failed");
     msg.target = target;
     target->ip4_addr = req->addr;
+
     if (req->seqnum) {
         target->flags |= PBB_NF_SEQN;
         target->seqnum = req->seqnum;
@@ -1326,6 +1334,13 @@ static int dymo_send_request(struct yamir_state *ys, struct dymo_req *req)
     origin->ip4_addr = ys->local_addr;
     origin->flags |= PBB_NF_SEQN;
     origin->seqnum = ys->own_seqnum;
+
+	log_debug("send RREQ msg_seq=%u orig_seq=%u src=%s dst=%s hlimit=%d",
+        req->seqnum,
+        origin->seqnum,
+        addr_tostr(origin->ip4_addr),
+        addr_tostr(target->ip4_addr),
+        msg.hop_limit);
 
     int ec = dymo_send_msg(ys, &msg, ys->mcast_addr);
     if (ec) return ec;
@@ -1359,8 +1374,7 @@ static int dymo_out_req(struct dymo_req *req)
         req->hop_count = 0;
     }
 
-    // send now
-    return dymo_send_request(route->ys, req);
+    return dymo_send_req(route->ys, req);
 }
 
 static void dymo_req_timeout(void *arg)
@@ -1386,7 +1400,6 @@ static void dymo_req_timeout(void *arg)
 
 static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
 {
-    log_debug("addr=%s ifindex=%d", addr_tostr(msg->ip4_addr), msg->ifindex);
 
     struct dymo_req *req = dymo_req_find(ys, msg->ip4_addr);
     if (req) {
@@ -1394,13 +1407,13 @@ static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
         return;
     }
 
-    // start route discovery
     struct dymo_route *route = route_create(ys);
     if (!route) {
         discovery_failed(ys, msg->ip4_addr, msg->ifindex);
         return;
     }
 
+    // start route discovery
     route->state = DRS_DISCOVER;
     route->created_ts = get_now_ms();
 
@@ -1411,6 +1424,7 @@ static void route_discover(struct yamir_state *ys, struct yamir_msg *msg)
     req->tries = 1;
     req->wait_time = DR_RREQ_WAIT_TIME;
 
+    log_debug("Staring discovery for addr=%s ifindex=%d", addr_tostr(msg->ip4_addr), msg->ifindex);
     int ec = dymo_out_req(req);
     if (ec)
         dymo_end_req(req, ec);
@@ -1444,30 +1458,28 @@ static void route_err(struct yamir_state *ys, struct yamir_msg *msg)
 {
     log_debug("addr=%s ifindex=%d", addr_tostr(msg->ip4_addr), msg->ifindex);
 
-    struct dymo_route *dr = match_route(ys, msg->ip4_addr);
+    struct dymo_route *route = match_route(ys, msg->ip4_addr);
 
     // normal case - no forwarding route
-    if (!dr) {
+    if (!route) {
         dymo_rerr_send(ys, msg->ip4_addr, 0, 0);
         return;
     }
 
     // did kernel lose route ?
-    if (!dr->is_broken) {
-        log_error("Not broken %s", route_tostr(dr));
-        if (dr->state == DRS_ACTIVE) {
-            rtnl_add_route(dr);
+    if (!route->is_broken) {
+        log_error("Not broken %s", route_tostr(route));
+        if (route->state == DRS_ACTIVE) {
+            rtnl_add_route(route);
         }
         return;
     }
 
     // draft says we should use seqnum if we have one
-    dymo_rerr_send(ys, msg->ip4_addr, dr->seqnum, 0);
+    dymo_rerr_send(ys, msg->ip4_addr, route->seqnum, 0);
 }
 
-
-// process incoming dymo message packet
-static int dymo_process_mmsg(struct yamir_state *ys,
+static int dymo_rx_mmsg(struct yamir_state *ys,
     struct mmsghdr *mmsg, struct recv_state *rs)
 {
     uint8_t *pkt = mmsg->msg_hdr.msg_iov->iov_base;
@@ -1493,11 +1505,14 @@ static int dymo_process_mmsg(struct yamir_state *ys,
         struct pbb_msg msg;
         ec = pkb_msg_dec(&buf, &msg);
         if (ec) continue;
+        log_debug("dymo-msg type=%s(%d) flags=0x%x nodes=%d",
+            pbb_type_tostr(msg.type), msg.type, msg.flags, msg.num_node);
         switch(msg.type) {
         case DYMO_RREQ: handle_rreq(ys, &msg, rs); break;
         case DYMO_RREP: handle_rrep(ys, &msg, rs); break;
         case DYMO_RERR: handle_rerr(ys, &msg, rs); break;
-        default: log_debug("Unknown type %d\n", msg.type);
+        default: 
+            break;
         }
     }
 
@@ -1513,27 +1528,25 @@ static int dymo_recv(struct yamir_state *ys)
         ys->msgs[i].msg_hdr.msg_controllen = sizeof(ys->ctrl_pool[i].buf);
     }
     int nr = recvfrom_wstate(ys->dymo_fd, YAMIR_MAXPKT, ys->msgs, states);
+
+    log_debug("recvfrom_wstate fd=%d nr=%d", ys->dymo_fd, nr);
+
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return log_errno_rf("recvfrom_wstate failed");
     }
 
     for (int i = 0; i < nr; i++) {
-        dymo_process_mmsg(ys, &ys->msgs[i], &states[i]);
+        dymo_rx_mmsg(ys, &ys->msgs[i], &states[i]);
     }
 
     return 0;
 }
 
-// send msg to kyamir
-static int kyamir_send_msg(struct genl_msg *gm)
+static int yamir_send_msg(struct genl_msg *msg)
 {
-    struct yamir_state *ys = gm->ys;
-    struct yamir_msg *ym = &gm->msg;
-
-    log_debug("family_id=%d type=%s(%d) addr=%s ifindex=%d",
-        ys->family_id, yamir_cmd_tostr(gm->cmd), gm->cmd,
-        addr_tostr(ym->ip4_addr), ym->ifindex);
+    struct yamir_state *ys = msg->ys;
+    struct yamir_msg *ym = &msg->ym;
 
     // request header
     struct genl_req req = { 0 };
@@ -1545,39 +1558,43 @@ static int kyamir_send_msg(struct genl_msg *gm)
     nlh->nlmsg_pid   = getpid();
 
     // set cmd
-    req.g.cmd = gm->cmd;
+    req.g.cmd = msg->cmd;
     req.g.version = 1;
 
     struct nlattr *nla;
 
-    // add ip4_addr attr
-    nla = mkptr(&req, NLMSG_SPACE(GENL_HDRLEN));
+    // add IP4_ADDR attr
+    nla = mkptr(&req, nlh->nlmsg_len);
     nla->nla_type = YAMIR_ATTR_IP4ADDR;
     nla->nla_len = sizeof(uint32_t) + NLA_HDRLEN;
     memcpy(mkptr(nla, NLA_HDRLEN), &ym->ip4_addr, sizeof(uint32_t));
     nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
 
-    // add if_index attr
-    nla = mkptr(&gm, nlh->nlmsg_len);
+    // add IF_INDEX attr
+    nla = mkptr(&req, nlh->nlmsg_len);
     nla->nla_type = YAMIR_ATTR_IFINDEX;
     nla->nla_len = sizeof(int32_t) + NLA_HDRLEN;
     memcpy(mkptr(nla, NLA_HDRLEN), &ym->ifindex, sizeof(int32_t));
     nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
 
+    log_debug("send seq=%u type=%d cmd=%s(%d) addr=%s ifindex=%d len=%u",
+        nlh->nlmsg_seq, nlh->nlmsg_type,
+        yamir_cmd_tostr(msg->cmd), msg->cmd,
+        addr_tostr(ym->ip4_addr), ym->ifindex,
+        nlh->nlmsg_len);
+
     int rc = netlink_send(ys->kyamir_fd, &req, nlh->nlmsg_len);
     if (rc) return rc;
 
     // message sent
-    gm->nl_seqno = nlh->nlmsg_seq;
+    msg->nl_seqno = nlh->nlmsg_seq;
     return 0;
 }
 
-// process yamir_msg from kernel space
 static void yamir_process_msg(struct yamir_state *ys, int cmd, struct yamir_msg *msg)
 {
-    log_debug("type=%s(%d) addr=%s ifindex=%d",
-        yamir_cmd_tostr(cmd), cmd,
-        addr_tostr(msg->ip4_addr), msg->ifindex);
+    log_debug("cmd=%s(%d) addr=%s ifindex=%d",
+        yamir_cmd_tostr(cmd), cmd, addr_tostr(msg->ip4_addr), msg->ifindex);
 
     switch(cmd) {
     case YAMIR_RT_NEED:  route_discover(ys, msg); break;
@@ -1654,7 +1671,7 @@ static void kyamir_handle_nlerr(struct yamir_state *ys, struct nlmsghdr *nlh)
 {
     struct genl_msg *msg = genl_msg_find(ys, nlh->nlmsg_seq);
     if (!msg) {
-        log_debug("msg not found %u", nlh->nlmsg_seq);
+        log_debug("no msg for seq=%u", nlh->nlmsg_seq);
         return;
     }
 
@@ -1662,13 +1679,13 @@ static void kyamir_handle_nlerr(struct yamir_state *ys, struct nlmsghdr *nlh)
     struct nlmsgerr *err;
     int rc;
     if (nlh->nlmsg_len < NLMSG_LENGTH(sizeof(*err))) {
-        log_debug("truncated payload %u", nlh->nlmsg_len);
+        log_error("truncated NLMSG_ERROR seq=%u len=%u", nlh->nlmsg_seq, nlh->nlmsg_len);
         rc = -EBADMSG;
     }
     else {
         err = NLMSG_DATA(nlh);
         rc = -err->error;
-        log_debug("recv nl-err %d (%s)", rc, strerror(rc));
+        log_debug("netlink seq=%u err=%s(%d)", nlh->nlmsg_seq, strerror(rc), rc);
     }
 
     // acked
@@ -1679,7 +1696,7 @@ static void kyamir_handle_nlctrl(struct yamir_state *ys, struct nlmsghdr *nlh)
 {
     struct genl_msg *msg = genl_msg_find(ys, nlh->nlmsg_seq);
     if (!msg) {
-        log_debug("msg not found %u", nlh->nlmsg_seq);
+        log_debug("no msg for %u", nlh->nlmsg_seq);
         return;
     } 
 
@@ -1692,9 +1709,9 @@ static void kyamir_handle_nlctrl(struct yamir_state *ys, struct nlmsghdr *nlh)
 
     log_info("+", "Received netlink id %d", ys->family_id);
 
-    // register with kernel module
+    // register with kyamir
     genl_msg_reset(msg, GNL_YAMIR, YAMIR_RT_REG);
-    int rc = kyamir_send_msg(msg);
+    int rc = yamir_send_msg(msg);
     if (rc) {
         genl_send_done(msg, rc);
         return;
@@ -1718,16 +1735,15 @@ static void kyamir_handle_nldata(struct yamir_state *ys, struct nlmsghdr *nlh)
     yamir_process_msg(ys, type, &msg);
 }
 
-// process mmsg from kernel module
-static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
+static void kyamir_rx_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
 {
     struct nlmsghdr *nlh = mmsg->msg_hdr.msg_iov->iov_base;
     size_t msg_len = mmsg->msg_len;
 
-    log_debug("mmsg_len=%zu", msg_len);
-
     for (; NLMSG_OK(nlh, msg_len); nlh = NLMSG_NEXT(nlh, msg_len)) {
-        log_debug("nlh_type=%u nlh_len=%u", nlh->nlmsg_type, nlh->nlmsg_len);
+        log_debug("nl-msg seq=%u type=%s(%u) len=%u", 
+            nlh->nlmsg_seq, nlmsg_type_tostr(nlh->nlmsg_type),
+            nlh->nlmsg_type, nlh->nlmsg_len);
         switch(nlh->nlmsg_type) {
         case NLMSG_DONE: 
             msg_len = 0;
@@ -1735,7 +1751,7 @@ static void kyamir_process_mmsg(struct yamir_state *ys, struct mmsghdr *mmsg)
         case NLMSG_ERROR: // error/ack message
             kyamir_handle_nlerr(ys, nlh);
             break;
-        case GENL_ID_CTRL:
+        case GENL_ID_CTRL: // generic netlink
             kyamir_handle_nlctrl(ys, nlh);
             break;
         default: // yamir request
@@ -1750,15 +1766,14 @@ static int kyamir_recv(struct yamir_state *ys)
 {
     int nr = recvmmsg(ys->kyamir_fd, ys->msgs, YAMIR_MAXPKT, MSG_DONTWAIT, NULL);
 
-    log_debug("recv kyamir_fd=%d nr=%d", ys->kyamir_fd, nr);
-
+    log_debug("recvmmsg fd=%d nr=%d", ys->kyamir_fd, nr);
     if (nr < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         return log_errno_rf("recvmmsg %d failed", ys->kyamir_fd);
     }
 
     for (int i = 0; i < nr; i++) {
-        kyamir_process_mmsg(ys, &ys->msgs[i]);
+        kyamir_rx_mmsg(ys, &ys->msgs[i]);
     }
 
     return 0;
@@ -1893,8 +1908,6 @@ static int resolv_family_id(struct yamir_state *ys)
     const char *name = YAMIR_NL_NAME;
     size_t name_len = sizeof(YAMIR_NL_NAME) - 1;
 
-    log_debug("name=%s", name);
-
     struct genl_msg *msg = genl_msg_create(ys, GNL_CTRL, CTRL_CMD_GETFAMILY);
     if (!msg) return log_error_rf("create CMD_GETFAMILY failed");
 
@@ -1917,6 +1930,10 @@ static int resolv_family_id(struct yamir_state *ys)
     nla->nla_len = name_len + 1 + NLA_HDRLEN;
     memcpy((char *)nla + NLA_HDRLEN, name, name_len + 1);
     nlh->nlmsg_len += NLMSG_ALIGN(nla->nla_len);
+
+    log_debug("send seq=%u type=%d cmd=%s name=%s len=%u",
+        nlh->nlmsg_seq, nlh->nlmsg_type,
+        "CTRL_CMD_GETFAMILY", name, nlh->nlmsg_len);
 
     int rc = netlink_send(ys->kyamir_fd, &req, nlh->nlmsg_len);
     if (rc) return log_error_rc(rc, "send CMD_GETFAMILY failed");
