@@ -174,7 +174,7 @@ static void drop_all(struct net *net, struct sk_buff_head *drop_q)
             kyamir_sk_report_err(skb->sk, EHOSTUNREACH);
         }
         else if (num_drop++ == 0) {
-            // remote peer
+            // remote peer - XXX code no longer used ?
             skb->dev = net->loopback_dev;
             skb_reset_network_header(skb);
             skb_set_transport_header(skb, ip_hdrlen(skb));
