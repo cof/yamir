@@ -502,11 +502,11 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     // atomic load 
     int portid = atomic_read(&ks->peer_portid);
     // read config
-	struct kyamir_config cfg;
-	unsigned int seq;
-	do {
+    struct kyamir_config cfg;
+    unsigned int seq;
+    do {
         seq = read_seqbegin(&ks->config_lock);
-		cfg = ks->config;
+        cfg = ks->config;
     } while (read_seqretry(&ks->config_lock, seq));
 
     // check ready

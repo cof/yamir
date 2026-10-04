@@ -44,7 +44,7 @@ kyamir uses
 - pernet subsystem with non global state storage
 - netdevice notifier to detect interface changes
 - inetaddr notifier to detect IP address changes
-- spinlocks, rcu, atomic for state changes
+- spinlocks, seqlock_t and atomic for state changes
 
 yamird uses
 
