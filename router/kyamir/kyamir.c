@@ -119,6 +119,7 @@ struct kyamir_state {
     atomic_t peer_portid; // netlink
     seqlock_t config_lock;
     struct kyamir_config config;
+    struct notifier_block fib_nb;
 };
 
 // module parameters
@@ -255,6 +256,7 @@ static void drain_all(struct kyamir_state *ks, struct sk_buff_head *dst_q)
 /*
  * Add skb to pending queue.
  * On success returns pending count for addr after enqueue else -errno.
+ * Note on success queue owns skb
  */
 static int queue_skb(struct kyamir_state *ks,
     struct net *net, struct sk_buff *skb,
@@ -289,16 +291,17 @@ static int queue_skb(struct kyamir_state *ks,
         hash_add(ks->pending, &yp->node, addr);
     }
 
-    // add packet
+    // queue skb 
     __skb_queue_tail(&yp->packets, skb);
     rc = skb_queue_len(&yp->packets);
     ks->pending_count++;
     pending = ks->pending_count;
+    // skb cant be touched after unlock
 
 drop_unlock:
     spin_unlock_bh(&ks->pending_lock);
-    pr_debug("nsid=%u addr=%pI4 len=%u pending=%u rc=%d\n",
-        net->ns.inum, &addr, skb->len, pending, rc);
+    pr_debug("nsid=%u addr=%pI4 pending=%u rc=%d\n",
+        net->ns.inum, &addr,  pending, rc);
 
     return rc;
 }
@@ -680,11 +683,6 @@ static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void
     return NOTIFY_DONE;
 }
 
-static struct notifier_block my_fib_nb = {
-    .notifier_call = kyamir_fib_event,
-};
-
-
 static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
 {
     // get device state
@@ -708,6 +706,7 @@ static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, v
     case NETDEV_REGISTER:
     case NETDEV_CHANGENAME:
     case NETDEV_UP:
+        // update config
         cfg.ifindex = dev->ifindex;
         struct in_device *in_dev = __in_dev_get_rtnl(dev);
         if (in_dev && in_dev->ifa_list) {
@@ -717,6 +716,13 @@ static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, v
             cfg.addr_mask  = ifa->ifa_mask;
         }
         break;
+    case NETDEV_DOWN:
+    case NETDEV_UNREGISTER:
+        // clear config
+        break;
+    default:
+        // preserve config
+        return NOTIFY_DONE;
     }
 
     // write config
@@ -739,7 +745,7 @@ static void __net_exit kyamir_net_exit(struct net *net)
     if (!ks) return;
 
     nf_unregister_net_hooks(net, kyamir_hook_ops, ARRAY_SIZE(kyamir_hook_ops));
-    unregister_fib_notifier(net, &my_fib_nb);
+    unregister_fib_notifier(net, &ks->fib_nb);
 
     flush_all(ks, net);
 
@@ -757,17 +763,16 @@ static int __net_init kyamir_net_init(struct net *net)
     // init packet queue
     hash_init(ks->pending);
     spin_lock_init(&ks->pending_lock);
-    ks->pending_count = 0;
 
     // init netlink
     atomic_set(&ks->peer_portid, 0);
 
     // init config
     seqlock_init(&ks->config_lock);
-    memset(&ks->config, 0, sizeof(ks->config));
 
     // add fib event tracker
-    int rc = register_fib_notifier(net, &my_fib_nb, NULL, NULL);
+    ks->fib_nb.notifier_call = kyamir_fib_event;
+    int rc = register_fib_notifier(net, &ks->fib_nb, NULL, NULL);
     if (rc < 0) {
         pr_err("register-fib failed");
         return rc;
@@ -777,7 +782,7 @@ static int __net_init kyamir_net_init(struct net *net)
     rc = nf_register_net_hooks(net, kyamir_hook_ops, ARRAY_SIZE(kyamir_hook_ops));
     if (rc) {
         pr_err("register-net-hooks failed");
-        unregister_fib_notifier(net, &my_fib_nb);
+        unregister_fib_notifier(net, &ks->fib_nb);
         return rc;
     }
 
