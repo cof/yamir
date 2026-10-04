@@ -17,6 +17,8 @@
 #define NETLINK_YAMIR NETLINK_USERSOCK
 #define NETLINK_YAMIR_GROUP 0
 
+#define YAMIR_MSG_SIZE  (nla_total_size(sizeof(u32)) + nla_total_size(sizeof(s32)))
+
 struct yamir_msg {
     uint32_t ip4_addr;
     int ifindex;

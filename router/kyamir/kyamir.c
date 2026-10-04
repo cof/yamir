@@ -435,12 +435,12 @@ static int yamir_send_msg(struct kyamir_state *ks,
     if (portid == 0) 
         return -ENOTCONN;
 
-    struct sk_buff *skb = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_ATOMIC);
+    struct sk_buff *skb = genlmsg_new(YAMIR_MSG_SIZE, GFP_ATOMIC);
     if (!skb)
         return -ENOMEM;
 
     if (!encode_msg(skb, cmd, msg)) {
-        kfree(skb);
+        kfree_skb(skb);
         return -EMSGSIZE;
     }
 
@@ -486,7 +486,6 @@ static struct notifier_block my_netlink_notifier = {
     .notifier_call = kyamir_netlink_notify,
 };
 
-
 // netfilter hook - IP packet coming into stack
 static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
@@ -514,11 +513,13 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     if (portid == 0) return rc;
 
     // accept if not IPv4 or bcase/mcast addr
+    struct iphdr *iph;
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
-    struct iphdr *iph = ip_hdr(skb);
+    iph = ip_hdr(skb);
     if (iph->version != 4 || iph->ihl < 5) return rc;
     if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) return rc;
     if (!pskb_may_pull(skb, iph->ihl * 4)) return rc;
+    iph = ip_hdr(skb);
 
     // accept if UDP DYMO packet
     if (iph->protocol == IPPROTO_UDP) {
