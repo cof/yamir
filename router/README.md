@@ -101,8 +101,8 @@ To control the MANET use create_manet.sh script
     + ip netns exec yamir2 ip addr add 172.0.0.20/24 dev wlan0
     + ip netns exec yamir2 ip link set wlan0 up
     + insmod /home/alpine/kyamir/kyamir.ko ifname=wlan0 max_qlen=1024
-    + ip netns exec yamir1 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 4
-    + ip netns exec yamir2 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 4
+    + ip netns exec yamir1 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir1.log -l 3
+    + ip netns exec yamir2 /home/alpine/yamird -d -i wlan0 -f /var/log/yamir2.log -l 3
 
 
 **Example: Checking status**
