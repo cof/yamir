@@ -860,8 +860,6 @@ static int __init kyamir_init(void)
 {
     int rc;
 
-    pr_info("loading\n");
-
     rc = genl_register_family(&my_gnl_family);
     if (rc < 0) {
         pr_err("register netlink failed");
