@@ -26,7 +26,7 @@
  * - each destination has its own packet queue
  * - Route discovery is handled by userspace via Generic Netlink
  * - Uses netfilter hooks to intercept IP packets
- * - Uses pernet subsystem, netdevice inetaddr and FIB notifiers
+ * - Uses pernet subsystem, netdevice and FIB notifiers
  * - Config read/writes protected by seqlock_t
  *
  * Netfilter hooks
@@ -63,7 +63,6 @@
 #include "compat.h"
 
 static int kyamir_netid; // kernel module per-net id
-static int kyamir_exiting = false;
 
 /* linux kernel ./net/ipv4/netfilter/ip_queue.c
  * Note packet timeouts are handled by dymo userspace
@@ -100,8 +99,8 @@ static inline const char *netdev_evt_tostr(unsigned long event)
 // packets waiting for route discovery
 struct yamir_pending {
     struct hlist_node node;
-    struct sk_buff_head packets; // IP paclets
-    unsigned long ts_added;     // age of  oldest packet
+    struct sk_buff_head packets; // IP packets
+    unsigned long ts_added;     // age of oldest packet
     __be32 addr;   
 };
 
@@ -452,10 +451,6 @@ static int kyamir_netlink_notify(struct notifier_block *block,
     unsigned long event,
     void *ptr)
 {
-    // ignore netlink event if exiting
-    if (kyamir_exiting) 
-        return NOTIFY_DONE;
-
     // get netlink state
     struct netlink_notify *n = ptr;
     if (!n || !n->net || n->protocol != NETLINK_GENERIC) 
@@ -491,7 +486,6 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
 {
     // accept if not skb
     int rc = NF_ACCEPT;
-    if (kyamir_exiting) return rc;
     if (!skb) return rc;
 
     // accept if state not found
@@ -512,7 +506,7 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     if (!cfg.ifindex || !cfg.ip4_addr) return rc;
     if (portid == 0) return rc;
 
-    // accept if not IPv4 or bcase/mcast addr
+    // accept if not IPv4 or bcast/mcast addr
     struct iphdr *iph;
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
     iph = ip_hdr(skb);
@@ -653,6 +647,8 @@ static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void
     }
 
     // get kyamir state
+    if (((struct fib_notifier_info *) ptr)->family != AF_INET)
+        return NOTIFY_DONE;
     struct fib_entry_notifier_info *info = ptr;
     if (!info || !info->fi)
         return NOTIFY_DONE;
@@ -840,19 +836,10 @@ static void __exit kyamir_exit(void)
 {
     pr_info("unloading netid=%d\n", kyamir_netid);
 
-    // set stopping
-    kyamir_exiting = true;
-    smp_wmb();
-
-    // unregister notifiers
-    unregister_netdevice_notifier(&my_netdev_nb);
-    netlink_unregister_notifier(&my_netlink_notifier);
-
-    // free state
-    unregister_pernet_subsys(&my_net_ops);
-
-    // stop netlink API
     genl_unregister_family(&my_gnl_family);
+    netlink_unregister_notifier(&my_netlink_notifier);
+    unregister_netdevice_notifier(&my_netdev_nb);
+    unregister_pernet_subsys(&my_net_ops);
 
     pr_info("unloaded netid=%d\n", kyamir_netid);
 }
@@ -861,16 +848,10 @@ static int __init kyamir_init(void)
 {
     int rc;
 
-    rc = genl_register_family(&my_gnl_family);
-    if (rc < 0) {
-        pr_err("register netlink failed");
-        return rc;
-    }
-
     rc = register_pernet_subsys(&my_net_ops);
     if (rc < 0) {
         pr_err("register pernet failed");
-        goto err_unreg_gnl;
+        goto done;
     }
 
     rc = register_netdevice_notifier(&my_netdev_nb);
@@ -885,18 +866,24 @@ static int __init kyamir_init(void)
         goto err_unreg_netdev;
     }
 
+    rc = genl_register_family(&my_gnl_family);
+    if (rc < 0) {
+        pr_err("register netlink failed");
+        goto err_unreg_netlink;
+    }
+
     pr_info("loaded netid=%d\n", kyamir_netid);
 
     return 0;
 
 // cleanup
+err_unreg_netlink:
+    netlink_unregister_notifier(&my_netlink_notifier);
 err_unreg_netdev:
     unregister_netdevice_notifier(&my_netdev_nb);
 err_unreg_pernet:
     unregister_pernet_subsys(&my_net_ops);
-err_unreg_gnl:
-    genl_unregister_family(&my_gnl_family);
-
+done:
     return rc;
 }
 
