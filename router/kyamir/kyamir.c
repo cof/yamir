@@ -587,7 +587,9 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
             // first time
             msg.ip4_addr = iph->daddr;
             msg.ifindex = dev->ifindex;
-            yamir_send_msg(ks, state->net, YAMIR_RT_NEED, &msg);
+            if (yamir_send_msg(ks, state->net, YAMIR_RT_NEED, &msg))
+                // send failed - drop queued skb's
+                drop_addr(ks, state->net, iph->daddr); 
         }
 
         // tell netfilter we will take it from here
@@ -729,6 +731,10 @@ static int kyamir_netdev_event(struct notifier_block *nb, unsigned long event, v
     write_seqlock_bh(&ks->config_lock);
     ks->config = cfg;
     write_sequnlock_bh(&ks->config_lock);
+
+    // discard queues
+    if (event == NETDEV_DOWN || event == NETDEV_UNREGISTER)
+        flush_all(ks, net);
 
     return NOTIFY_DONE;
 }
