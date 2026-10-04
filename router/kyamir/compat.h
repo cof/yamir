@@ -8,69 +8,9 @@
 
 #include <linux/string.h>
 
-/**
- * kyamir_get_net - Safely retrieves the net pointer.
- */
-static inline struct net *kyamir_get_net(void) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
-    // network namespaces were introduced in 2.6.24
-    return &init_net;
-#else
-    // older kernels namespaces didn't exist
-    return NULL;
-#endif
-}
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-    #define KYAMIR_HOOK_CAST (nf_hookfn *)
-#else
-    #define KYAMIR_HOOK_CAST (void *)
-    struct nf_hook_state {
-        u8 hook;
-        struct net *net;
-        struct net_device *in;
-        struct net_device *out;
-    };
-#endif
-
-// struct netlink_notify pid/portiid field rename
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
-#  define NOTIFY_ID(n) ((n)->portid)
-#else
-#  define NOTIFY_ID(n) ((n)->pid)
-#endif
-
-static inline int kyamir_register_nf_hook(struct net *net, struct nf_hook_ops *ops)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-    // Modern: Requires namespace pointer
-    return nf_register_net_hook(net, ops);
-#else
-    // older S2/Desire kernels dont
-    return nf_register_hook(ops);
-#endif
-}
-
-static inline void kyamir_unregister_nf_hook(struct net *net, struct nf_hook_ops *ops)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-    nf_unregister_net_hook(net, ops);
-#else
-    nf_unregister_hook(ops);
-#endif
-}
-
 static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct sk_buff *skb))
 {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0))
-    return netlink_kernel_create(&init_net,
-        NELINK_USERSOCK,
-        NETLINK_YAMIR_GROUP,
-        recv_cb,
-        NULL,
-        THIS_MODULE
-    );
-#elif (LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0))
     struct netlink_kernel_cfg cfg = {
         .groups = NETLINK_YAMIR_GROUP,
         .input = recv_cb,
@@ -104,14 +44,6 @@ static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb
     #define kyamir_strlcpy(dest, src, size) strscpy(dest, src, size)
 #else
     #define kyamir_strlcpy(dest, src, size) strlcpy(dest, src, size)
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0)
-    /* versions between 3.7 and 3.10 used portid  */
-    #define NETLINK_SENDER_ID(nlh) ((nlh)->nlmsg_portid)
-#else
-    /* Most versions use pid */
-    #define NETLINK_SENDER_ID(nlh) ((nlh)->nlmsg_pid)
 #endif
 
 
