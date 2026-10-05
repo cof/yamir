@@ -487,11 +487,9 @@ static struct notifier_block my_netlink_notifier = {
 // netfilter hook - IP packet coming into stack
 static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-    // accept if not skb
-    int rc = NF_ACCEPT;
-    if (!skb) return rc;
+    int rc = NF_ACCEPT; // default action
 
-    // accept if state not found
+    // get our state
     struct kyamir_state *ks = net_generic(state->net, kyamir_netid);
     if (!ks) return rc;
 
@@ -510,19 +508,19 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     if (portid == 0) return rc;
 
     // accept if not IPv4 or bcast/mcast addr
-    struct iphdr *iph;
     if (!pskb_may_pull(skb, sizeof(struct iphdr))) return rc;
-    iph = ip_hdr(skb);
-    if (iph->version != 4 || iph->ihl < 5) return rc;
-    if (iph->daddr == INADDR_BROADCAST || IN_MULTICAST(ntohl(iph->daddr))) return rc;
-    if (!pskb_may_pull(skb, iph->ihl * 4)) return rc;
-    iph = ip_hdr(skb);
+    struct iphdr *iph = ip_hdr(skb);
+    __be32 daddr = iph->daddr;
+    if (ipv4_is_lbcast(daddr) || ipv4_is_multicast(daddr)) return rc;
+    __be32 saddr = iph->saddr;
+    u8 ip_proto = iph->protocol;
 
     // accept if UDP DYMO packet
-    if (iph->protocol == IPPROTO_UDP) {
-        int ip_len = iph->ihl * 4;
-        if (!pskb_may_pull(skb, ip_len + sizeof(struct udphdr))) return rc;
-        struct udphdr *udph = (struct udphdr *) ((uint8_t *)ip_hdr(skb) + ip_len);
+    if (ip_proto == IPPROTO_UDP && !ip_is_fragment(iph)) {
+        struct udphdr _udph;
+        int ip_len =  iph->ihl * 4;
+        const struct udphdr *udph = skb_header_pointer(skb, ip_len, sizeof(_udph), &_udph);
+        if (!udph) return rc;
         if (ntohs(udph->dest) == DYMO_PORT || ntohs(udph->source) == DYMO_PORT) {
             // dymo message - allow it to pass to userspace
             return rc;
@@ -530,9 +528,9 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     }
 
     // firing
-    pr_debug("nsid=%u hook=%s(%d) proto=%d saddr=%pI4 daddr=%pI4\n",
+    pr_debug("nsid=%u hook=%s(%d) proto=%d saddr=%pI4 daddr=%pI4 skb_len=%u\n",
         state->net->ns.inum, hook_tostr(state->hook), state->hook,
-        iph->protocol, &iph->saddr, &iph->daddr);
+        ip_proto, &saddr, &daddr, skb->len);
 
     struct yamir_msg msg;
     const struct net_device *dev;
@@ -544,21 +542,21 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
         dev = state->in;
         if (!dev || dev->ifindex != cfg.ifindex) return rc;
         // ignore broadcasts
-        if (iph->daddr == cfg.bcast_addr) return rc;
+        if (daddr == cfg.bcast_addr) return rc;
 
         // tell userspace this route is active
-        msg.ip4_addr = iph->saddr;
+        msg.ip4_addr = saddr;
         msg.ifindex = dev->ifindex;
         yamir_send_msg(ks, state->net, YAMIR_RT_INUSE, &msg);
 
         // accept if IP packet sent from or to this node
-        if (iph->saddr == cfg.ip4_addr || iph->daddr == cfg.ip4_addr) break;
+        if (saddr == cfg.ip4_addr || daddr == cfg.ip4_addr) break;
 
         // accept if incoming packet is routable
-        if (route_exists(cfg.ifindex, state->net, iph->saddr, iph->daddr)) break;
+        if (route_exists(cfg.ifindex, state->net, saddr, daddr)) break;
 
         // drop packets which we cannot route
-        msg.ip4_addr = iph->daddr;
+        msg.ip4_addr = daddr;
         msg.ifindex = dev->ifindex;
         yamir_send_msg(ks, state->net, YAMIR_RT_ERR, &msg);
         rc = NF_DROP;
@@ -570,13 +568,13 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
         dev = state->out;
         if (!dev || dev->ifindex != cfg.ifindex) return rc;
         // ignore broadcasts
-        if (iph->daddr == cfg.bcast_addr) return rc;
+        if (daddr == cfg.bcast_addr) return rc;
 
         // accept if dst is routable
-        if (route_exists(cfg.ifindex, state->net, iph->saddr, iph->daddr)) break;
+        if (route_exists(cfg.ifindex, state->net, saddr, daddr)) break;
 
         // assume first time if dst not already on queue
-        rc = queue_skb(ks, state->net, skb, iph->daddr);
+        rc = queue_skb(ks, state->net, skb, daddr);
         if (rc <= 0) {
             // limit exceeded ?
             rc = NF_DROP;
@@ -585,11 +583,11 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
 
         if (rc == 1) {
             // first time
-            msg.ip4_addr = iph->daddr;
+            msg.ip4_addr = daddr;
             msg.ifindex = dev->ifindex;
             if (yamir_send_msg(ks, state->net, YAMIR_RT_NEED, &msg))
                 // send failed - drop queued skb's
-                drop_addr(ks, state->net, iph->daddr); 
+                drop_addr(ks, state->net, daddr); 
         }
 
         // tell netfilter we will take it from here
@@ -602,10 +600,10 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
         dev = state->out;
         if (!dev || dev->ifindex != cfg.ifindex) return rc;
         // ignore broadcasts
-        if (iph->daddr == cfg.bcast_addr) return rc;
+        if (daddr == cfg.bcast_addr) return rc;
 
         // tell userspace that this route is in use
-        msg.ip4_addr = iph->daddr;
+        msg.ip4_addr = daddr;
         msg.ifindex = dev->ifindex;
         yamir_send_msg(ks, state->net, YAMIR_RT_INUSE, &msg);
         break;
@@ -615,25 +613,25 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
 }
 
 
-static const struct nf_hook_ops kyamir_hook_ops[] = {
+static const struct nf_hook_ops ipv4_hook_ops[] = {
     // incoming packets from net device to host
     {
      .hook     = kyamir_nf_hook,
-     .pf       = PF_INET,
+     .pf       = NFPROTO_IPV4,
      .hooknum  = NF_INET_PRE_ROUTING,
      .priority = NF_IP_PRI_FIRST,
      },
     // host sending packets, before routing 
     {
      .hook     = kyamir_nf_hook,
-     .pf       = PF_INET,
+     .pf       = NFPROTO_IPV4,
      .hooknum  = NF_INET_LOCAL_OUT,
      .priority = NF_IP_PRI_FILTER,
      },
     // after routing, packets from host to net device
     {
      .hook     = kyamir_nf_hook,
-     .pf       = PF_INET,
+     .pf       = NFPROTO_IPV4,
      .hooknum  = NF_INET_POST_ROUTING,
      .priority = NF_IP_PRI_FILTER,
      },
@@ -750,7 +748,7 @@ static void __net_exit kyamir_net_exit(struct net *net)
     struct kyamir_state *ks = net_generic(net, kyamir_netid);
     if (!ks) return;
 
-    nf_unregister_net_hooks(net, kyamir_hook_ops, ARRAY_SIZE(kyamir_hook_ops));
+    nf_unregister_net_hooks(net, ipv4_hook_ops, ARRAY_SIZE(ipv4_hook_ops));
     unregister_fib_notifier(net, &ks->fib_nb);
 
     flush_all(ks, net);
@@ -785,7 +783,7 @@ static int __net_init kyamir_net_init(struct net *net)
     }
 
     // add netfilter hooks
-    rc = nf_register_net_hooks(net, kyamir_hook_ops, ARRAY_SIZE(kyamir_hook_ops));
+    rc = nf_register_net_hooks(net, ipv4_hook_ops, ARRAY_SIZE(ipv4_hook_ops));
     if (rc) {
         pr_err("register-net-hooks failed");
         unregister_fib_notifier(net, &ks->fib_nb);
