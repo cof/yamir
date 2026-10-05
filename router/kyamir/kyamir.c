@@ -133,7 +133,7 @@ module_param(max_qlen, uint, 0444);
 MODULE_PARM_DESC(ifname, "Interface name to intercept (e.g. wlan0)");
 MODULE_PARM_DESC(max_qlen, "Maximum packets queued waiting for a route");
 
-static bool route_exists(int ifindex, struct net *net, __be32 saddr, __be32 daddr)
+static bool route_exists(struct net *net, int ifindex, __be32 saddr, __be32 daddr)
 {
     struct flowi4 fl4 = {
         .saddr = saddr,
@@ -143,7 +143,7 @@ static bool route_exists(int ifindex, struct net *net, __be32 saddr, __be32 dadd
     };
     struct fib_result res;
 
-    int rc = fib_lookup(net, &fl4, &res, 0);
+    int rc = fib_lookup(net, &fl4, &res, FIB_LOOKUP_NOREF);
     if (rc) return false;
 
     // routable if fi exists and was installed by yamird
@@ -255,17 +255,24 @@ static void drain_all(struct kyamir_state *ks, struct sk_buff_head *dst_q)
 }
 
 /*
- * Add skb to pending queue.
- * On success returns pending count for addr after enqueue else -errno.
- * Note on success queue owns skb
+ * Add skb to pending queue if dst addr is not routable.
+ * Returns pending count for daddr after enqueue else -errno.
+ * Note queue owns skb if pending count > 0.
  */
 static int queue_skb(struct kyamir_state *ks,
     struct net *net, struct sk_buff *skb,
-    __be32 addr)
+    int ifindex, __be32 saddr, __be32 daddr)
 {
+    int rc;
+
     spin_lock_bh(&ks->pending_lock);
+
+    // accept if dst is routable
+    if (route_exists(net, ifindex, saddr, daddr)) {
+        rc = 0;
+        goto drop_unlock;
+    }
     
-    int rc = 0;
     uint32_t pending = ks->pending_count;
     if (pending >= max_qlen) {
         pr_warn_ratelimited("queue full (%u pkts). Dropping.\n", pending);
@@ -275,8 +282,8 @@ static int queue_skb(struct kyamir_state *ks,
 
     // lookup pending addr
     struct yamir_pending *yp = NULL;
-    hash_for_each_possible(ks->pending, yp, node, addr) {
-        if (yp->addr == addr) break;
+    hash_for_each_possible(ks->pending, yp, node, daddr) {
+        if (yp->addr == daddr) break;
     }
 
     if (!yp) {
@@ -287,9 +294,9 @@ static int queue_skb(struct kyamir_state *ks,
             rc = -ENOMEM;
             goto drop_unlock;
         }
-        yp->addr = addr;
+        yp->addr = daddr;
         __skb_queue_head_init(&yp->packets);
-        hash_add(ks->pending, &yp->node, addr);
+        hash_add(ks->pending, &yp->node, daddr);
     }
 
     // queue skb 
@@ -302,7 +309,7 @@ static int queue_skb(struct kyamir_state *ks,
 drop_unlock:
     spin_unlock_bh(&ks->pending_lock);
     pr_debug("nsid=%u addr=%pI4 pending=%u rc=%d\n",
-        net->ns.inum, &addr,  pending, rc);
+        net->ns.inum, &daddr,  pending, rc);
 
     return rc;
 }
@@ -554,7 +561,7 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
         if (saddr == cfg.ip4_addr || daddr == cfg.ip4_addr) break;
 
         // accept if incoming packet is routable
-        if (route_exists(cfg.ifindex, state->net, saddr, daddr)) break;
+        if (route_exists(state->net, cfg.ifindex, saddr, daddr)) break;
 
         // drop packets which we cannot route
         msg.ip4_addr = daddr;
@@ -571,13 +578,16 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
         // ignore broadcasts
         if (daddr == cfg.bcast_addr) return rc;
 
-        // accept if dst is routable
-        if (route_exists(cfg.ifindex, state->net, saddr, daddr)) break;
-
         // assume first time if dst not already on queue
-        rc = queue_skb(ks, state->net, skb, daddr);
-        if (rc <= 0) {
-            // limit exceeded ?
+        rc = queue_skb(ks, state->net, skb, cfg.ifindex, saddr, daddr);
+        if (rc == 0) {
+            // daddr is routable
+            rc = NF_ACCEPT;
+            break;
+        }
+
+        if (rc < 0) {
+            // error
             rc = NF_DROP;
             break;
         }
