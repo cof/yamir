@@ -56,6 +56,7 @@
 #include <net/net_namespace.h>
 #include <net/genetlink.h>
 
+#include <net/ip.h>
 #include <net/icmp.h>
 
 // kyamir/kyamir config
@@ -518,7 +519,7 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     // accept if UDP DYMO packet
     if (ip_proto == IPPROTO_UDP && !ip_is_fragment(iph)) {
         struct udphdr _udph;
-        int ip_len =  iph->ihl * 4;
+        int ip_len = iph->ihl * 4;
         const struct udphdr *udph = skb_header_pointer(skb, ip_len, sizeof(_udph), &_udph);
         if (!udph) return rc;
         if (ntohs(udph->dest) == DYMO_PORT || ntohs(udph->source) == DYMO_PORT) {
@@ -815,14 +816,12 @@ static const struct nla_policy my_policy[YAMIR_ATTR_MAX + 1] = {
 static const struct genl_ops my_ops[] = {
     {
         .cmd     = YAMIR_RT_REG,
-        .flags   = 0,
         .doit    = kyamir_netlink_recv,
         .flags   = GENL_ADMIN_PERM,
         .policy  = my_policy,
     },
     {
         .cmd     = YAMIR_RT_FAIL,
-        .flags   = 0,
         .doit    = kyamir_netlink_recv,
         .flags   = GENL_ADMIN_PERM,
         .policy  = my_policy,
