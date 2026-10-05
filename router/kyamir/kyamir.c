@@ -92,6 +92,10 @@ static inline const char *netdev_evt_tostr(unsigned long event)
     case NETDEV_CHANGE:     return "NETDEV_CHANGE";
     case NETDEV_REGISTER:   return "NETDEV_REGISTER";
     case NETDEV_UNREGISTER: return "NETDEV_UNREGISTER";
+    case NETDEV_CHANGEMTU:  return "NETDEV_CHANGMTU";
+    case NETDEV_CHANGEADDR: return "NETDEV_CHANGEADDR";
+    case NETDEV_GOING_DOWN: return "NETDEV_GOING_DOWN";
+    case NETDEV_CHANGENAME: return "NETDEV_CHANGENAME";
     default: return "NETDEV_???";
     }
 }
