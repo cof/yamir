@@ -106,7 +106,7 @@ struct yamir_pending {
     struct hlist_node node;
     struct sk_buff_head packets; // IP packets
     unsigned long ts_added;     // age of oldest packet
-    __be32 addr;   
+    __be32 addr;
 };
 
 struct kyamir_config {
@@ -276,7 +276,7 @@ static int queue_skb(struct kyamir_state *ks,
         rc = 0;
         goto drop_unlock;
     }
-    
+
     uint32_t pending = ks->pending_count;
     if (pending >= max_qlen) {
         pr_warn_ratelimited("queue full (%u pkts). Dropping.\n", pending);
@@ -303,7 +303,7 @@ static int queue_skb(struct kyamir_state *ks,
         hash_add(ks->pending, &yp->node, daddr);
     }
 
-    // queue skb 
+    // queue skb
     __skb_queue_tail(&yp->packets, skb);
     rc = skb_queue_len(&yp->packets);
     ks->pending_count++;
@@ -446,7 +446,7 @@ static int yamir_send_msg(struct kyamir_state *ks,
         yamir_cmd_tostr(cmd), cmd, &msg->ip4_addr, msg->ifindex);
 
     // check if userspace connected
-    if (portid == 0) 
+    if (portid == 0)
         return -ENOTCONN;
 
     struct sk_buff *skb = genlmsg_new(YAMIR_MSG_SIZE, GFP_ATOMIC);
@@ -468,7 +468,7 @@ static int kyamir_netlink_notify(struct notifier_block *block,
 {
     // get netlink state
     struct netlink_notify *n = ptr;
-    if (!n || !n->net || n->protocol != NETLINK_GENERIC) 
+    if (!n || !n->net || n->protocol != NETLINK_GENERIC)
         return NOTIFY_DONE;
 
     // get state
@@ -505,7 +505,7 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
     struct kyamir_state *ks = net_generic(state->net, kyamir_netid);
     if (!ks) return rc;
 
-    // atomic load 
+    // atomic load
     int portid = atomic_read(&ks->peer_portid);
     // read config
     struct kyamir_config cfg;
@@ -602,7 +602,7 @@ static unsigned int kyamir_nf_hook(void *priv, struct sk_buff *skb, const struct
             msg.ifindex = dev->ifindex;
             if (yamir_send_msg(ks, state->net, YAMIR_RT_NEED, &msg))
                 // send failed - drop queued skb's
-                drop_addr(ks, state->net, daddr); 
+                drop_addr(ks, state->net, daddr);
         }
 
         // tell netfilter we will take it from here
@@ -636,7 +636,7 @@ static const struct nf_hook_ops ipv4_hook_ops[] = {
      .hooknum  = NF_INET_PRE_ROUTING,
      .priority = NF_IP_PRI_FIRST,
      },
-    // host sending packets, before routing 
+    // host sending packets, before routing
     {
      .hook     = kyamir_nf_hook,
      .pf       = NFPROTO_IPV4,
@@ -652,7 +652,7 @@ static const struct nf_hook_ops ipv4_hook_ops[] = {
      },
 };
 
-static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void *ptr) 
+static int kyamir_fib_event(struct notifier_block *nb, unsigned long event, void *ptr)
 {
     // accept only route entry events
     switch(event) {
