@@ -449,7 +449,7 @@ static int yamir_send_msg(struct kyamir_state *ks,
     if (portid == 0)
         return -ENOTCONN;
 
-    struct sk_buff *skb = genlmsg_new(YAMIR_MSG_SIZE, GFP_ATOMIC);
+    struct sk_buff *skb = genlmsg_new(YAMIR_MSGSIZE, GFP_ATOMIC);
     if (!skb)
         return -ENOMEM;
 

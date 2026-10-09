@@ -8,23 +8,6 @@
 
 #include <linux/string.h>
 
-static inline struct sock *kyamir_netlink_kernel_create(void (*recv_cb)(struct sk_buff *skb))
-{
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0))
-    struct netlink_kernel_cfg cfg = {
-        .groups = NETLINK_YAMIR_GROUP,
-        .input = recv_cb,
-        .owner = THIS_MODULE
-    };
-    return netlink_kernel_create(&init_net, NELINK_YAMIR, &cfg);
-#else
-    struct netlink_kernel_cfg cfg = {
-        .groups = NETLINK_YAMIR_GROUP,
-        .input  = recv_cb,
-    };
-    return netlink_kernel_create(&init_net, NETLINK_YAMIR, &cfg);
-#endif
-}
 
 // assign new route to packet
 static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb)
@@ -66,16 +49,10 @@ static inline void kyamir_netlink_ack(struct sk_buff *skb, struct nlmsghdr *nlh,
  */
 static inline void kyamir_sk_report_err(struct sock *sk, int err)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
     if (!sk_fullsock(sk))
         return;
-#endif
 
-#ifdef WRITE_ONCE
     WRITE_ONCE(sk->sk_err, err);
-#else
-    sk->sk_err = err;
-#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,16,0)
     sk_error_report(sk);

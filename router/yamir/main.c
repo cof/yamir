@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
  * YAMIR - Yet Another MANET IP Router
@@ -69,7 +70,6 @@
 #include "pbb.h"
 
 #define YAMIR_MAXBUF 1024
-#define YAMIR_MSGSIZE NLMSG_SPACE(sizeof(struct yamir_msg))
 #define YAMIR_MAXCTRL  128
 #define YAMIR_MAXPKT 10
 #define YAMIR_MAXTIMER 128
@@ -1866,9 +1866,10 @@ static int rtnl_send_msg(int cmd_type, struct dymo_route *dr)
         char buf[512];
     } req;
 
+    memset(&req, 0, sizeof(req));
+
     // setup netlink msg header
     struct nlmsghdr *nlh = &req.nlm;
-    memset(nlh, 0, sizeof(*nlh));
     nlh->nlmsg_len   = NLMSG_LENGTH(sizeof(struct rtmsg));
     nlh->nlmsg_type  = cmd_type;
     nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;

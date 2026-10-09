@@ -8,16 +8,12 @@
 
 // rtm_protocol - See /usr/include/linux/rtnetlink.h
 #define YAMIR_NL_NAME "yamir_netlink"
-#define YAMIR_NL_GROUP 0
 
-// routing protocol - we resue MANET AODV protocol ID
+// routing protocol - reuse MANET AODV protocol ID
 #define YAMIR_RT_PROTO 200
 
-// TODO remove these
-#define NETLINK_YAMIR NETLINK_USERSOCK
-#define NETLINK_YAMIR_GROUP 0
-
-#define YAMIR_MSG_SIZE  (nla_total_size(sizeof(u32)) + nla_total_size(sizeof(s32)))
+// spaced needded fo yamir_msg genlmsg_new
+#define YAMIR_MSGSIZE (nla_total_size(sizeof(u32)) + nla_total_size(sizeof(s32)))
 
 struct yamir_msg {
     uint32_t ip4_addr;
