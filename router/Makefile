@@ -89,8 +89,13 @@ endif
 .PHONY: all
 all : $(YAMIR) kyamir
 
+ifeq ($(DEBUG),1)
+CFLAGS := -O0 -g $(YAMIR_CFLAGS) $(DEBUG_CFLAGS)
+endif
+
 # debug build
 # -----------
+.PHONY: debug
 debug: CFLAGS = -O0 $(YAMIR_CFLAGS) $(DEBUG_CFLAGS)
 debug: all test_runner
 

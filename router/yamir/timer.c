@@ -82,8 +82,6 @@ static void slot_release(struct timer_mgr *tm, struct timer_slot *ts)
 {
     int tid = ts - tm->slot;
 
-    log_debug("tid=%d ntimer=%d", tm->num_timer, tid);
-
     ts->hpos = tm->free_head;
     ts->flags = 0;
     ts->cb = NULL;
@@ -156,13 +154,10 @@ int timer_check(struct timer_mgr *tm)
 {
     tm->now_ms = get_now_ms();
 
-    log_debug("now_ms=%lu ntimer=%d", tm->now_ms, tm->num_timer);
-
     while (tm->num_timer) {
         int tid = tm->heap[0];
         struct timer_slot *ts = &tm->slot[tid];
         int delta_ms = get_delta_ms(ts->expiry, tm->now_ms);
-        log_debug("tid=%d expiry=%lu delta=%d", tid, ts->expiry, delta_ms);
         if (delta_ms) break;
         // copy expired timer
         tm->fire[tm->num_fire++] = *ts;
@@ -185,17 +180,15 @@ int timer_check(struct timer_mgr *tm)
     }
 
     int next_ms = next_expiry(tm);
-    log_debug("next_ms=%d", next_ms);
-
+    log_debug("ntimer=%d next_ms=%d", tm->num_timer, next_ms);
     return next_ms;
 }
 
 int timer_add(struct timer_mgr *tm, uint32_t delay_ms, void (*cb)(void *arg), void *arg)
 {
-    log_debug("delay=%u cb=%p arg=%p ntimer=%d", delay_ms, cb, arg, tm->num_timer);
-
     int tid = get_free_slot(tm);
-    if (tid == -1) return -1;
+    if (tid == -1) 
+        return log_error_rf("no free slots");
 
     struct timer_slot *ts = &tm->slot[tid];
     uint64_t now_ms = get_now_ms();
@@ -209,19 +202,19 @@ int timer_add(struct timer_mgr *tm, uint32_t delay_ms, void (*cb)(void *arg), vo
     tm->heap[tm->num_timer++] = tid;
     minheap_siftup(tm, tm->num_timer - 1);
 
-    log_debug("tid=%d now_ms=%lu expiry=%lu hpos=%u ntimer=%d", 
-        tid, now_ms, ts->expiry, ts->hpos, tm->num_timer);
+    log_debug("tid=%d delay_ms=%u now_ms=%lu expiry=%lu hpos=%u ntimer=%d", 
+        tid, delay_ms, now_ms, ts->expiry, ts->hpos, tm->num_timer);
 
     return tid;
 }
 
 void timer_cancel(struct timer_mgr *tm, int tid)
 {
-    log_debug("tid=%d ntimer=%d", tid, tm->num_timer);
-
     if (tid < 0 || tid >= TIMER_MAXSLOT) return;
 
     struct timer_slot *ts = &tm->slot[tid];
+    if (!(ts->flags & TSF_ACTIVE)) return;
+
     int hpos = ts->hpos;
     if (hpos < 0) return;
 
@@ -237,5 +230,6 @@ void timer_cancel(struct timer_mgr *tm, int tid)
         }
     }
 
+    log_debug("tid=%d ntimer=%d", tid, tm->num_timer);
     slot_release(tm, ts);
 }

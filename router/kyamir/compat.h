@@ -8,7 +8,6 @@
 
 #include <linux/string.h>
 
-
 // assign new route to packet
 static inline int kyamir_ip_route_me_harder(struct net *net, struct sk_buff *skb)
 {
@@ -60,3 +59,25 @@ static inline void kyamir_sk_report_err(struct sock *sk, int err)
     sk->sk_error_report(sk);
 #endif
 }
+
+#ifdef CONFIG_IP_ROUTE_CLASSID
+static inline u32 nhc_flow(const struct fib_nh_common *nhc)
+{
+    if (nhc->nhc_family != AF_INET)
+        return 0;
+    return container_of(nhc, struct fib_nh, nh_common)->nh_tclassid;
+}
+static inline u32 fib_flow_id(const struct fib_info *fi)
+{
+    return fi->fib_nh[0].nh_tclassid;
+}
+
+#else
+static inline u32 nhc_flow(const struct fib_nh_common *nhc) {
+    return 0;
+}
+static inline u32 fib_flow_id(const struct fib_info *fi)
+{
+    return 0;
+}
+#endif
