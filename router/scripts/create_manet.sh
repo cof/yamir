@@ -207,6 +207,6 @@ case "$1" in
     routes) routes ;; 
     ping)   ping ;;
     tcp)    tcp ;; 
-    *) echo "Usage: $0 {start|stop|status|route|ping|tcp|reset}" ;;
+    *) echo "Usage: $0 {start|stop|status|routes|ping|tcp|reset}" ;;
 esac
 
