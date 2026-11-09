@@ -218,7 +218,7 @@ vm-poweroff:
 	echo "[+] Waiting for $(VM_NAME) poweroff"; \
 	count=0; \
 	while [ $$count -lt $(VM_WAIT_RETRIES) ]; do \
-		if ! virsh list --name | grep -qXF "$(VM_NAME)"; then \
+		if ! virsh list --name | grep -qxF "$(VM_NAME)"; then \
 			echo "VM shutdown after $$((count * $(VM_WAIT_SLEEP)))s."; \
 			exit 0; \
 		fi; \
