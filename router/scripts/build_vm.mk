@@ -108,7 +108,7 @@ VM_DONE      = $(BUILD_DIR)/.vm_done
 
 # get public key
 # --------------
-VM_SSH_KEYFILE := ~/.ssh/id_rsa
+VM_SSH_KEYFILE ?= ~/.ssh/id_rsa
 VM_PUB_KEYFILE := $(VM_SSH_KEYFILE).pub
 VM_SSH_PUBKEY  := $(shell cat $(VM_PUB_KEYFILE) 2>/dev/null || echo "NO_KEY_FOUND")
 
@@ -130,7 +130,7 @@ USER_DATA_TEMPLATE := $(SCRIPT_DIR)user-data.yaml
 # ---------------------------
 $(VM_USER_DATA): $(USER_DATA_TEMPLATE) | $(BUILD_DIR)
 	$(Q)if [ "$(VM_SSH_PUBKEY)" = "NO_KEY_FOUND" ]; then \
-		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
+		echo "Error: No public key found in $(VM_PUB_KEYFILE)"; \
 		exit 1; \
 	fi
 	$(Q)sed -e "s|{{VM_NAME}}|$(VM_NAME)|g" \
@@ -153,7 +153,7 @@ $(VM_DIR):
 # -------------------
 $(VM_CACHE_FILE) : | $(VM_CACHE_DIR)
 	$(Q)echo "[+] Downloading VM-DISK: $(REL_URL)"
-	$(Q)wget -nv --no-verbose --show-progress -O $@.tmp $(REL_URL)
+	$(Q)wget --no-verbose --show-progress -O $@.tmp $(REL_URL)
 	$(Q)mv $@.tmp $@
 	$(Q)chmod 444 $@
 
@@ -164,7 +164,6 @@ $(VM_DISK): | $(VM_CACHE_FILE) $(VM_DIR)
 	$(Q)cp $(VM_CACHE_FILE) $@
 	$(Q)chmod 644 $@
 	$(Q)qemu-img resize -q $@ +$(VM_RESIZE)
-	$(Q)chmod 444 $@
 
 .PHONY: vm-config
 vm-config:
@@ -219,7 +218,7 @@ vm-poweroff:
 	echo "[+] Waiting for $(VM_NAME) poweroff"; \
 	count=0; \
 	while [ $$count -lt $(VM_WAIT_RETRIES) ]; do \
-		if ! virsh list --name | grep -q "^$(VM_NAME)$$"; then \
+		if ! virsh list --name | grep -qXF "$(VM_NAME)"; then \
 			echo "VM shutdown after $$((count * $(VM_WAIT_SLEEP)))s."; \
 			exit 0; \
 		fi; \
@@ -242,7 +241,7 @@ vm-create: $(VM_DONE)
 
 .PHONY: vm-start
 vm-start:
-	$(Q)virsh -q list --state-running --name | grep -q "^$(VM_NAME)" || \
+	$(Q)virsh -q list --state-running --name | grep -qxF "$(VM_NAME)" || \
 		(echo "[+] Starting VM: $(VM_NAME)" && virsh -q start $(VM_NAME))
 	$(Q)$(MAKE) vm-wait
 
@@ -274,5 +273,5 @@ vm-list:
 .PHONY: vm-clean
 vm-clean:
 	 virsh -q destroy $(VM_NAME) || true
-	 virsh -q undefine $(VM_NAME) || true || true
+	 virsh -q undefine $(VM_NAME) || true
 	 rm -rf $(VM_DIR) $(VM_DONE) $(VM_USER_DATA) $(VM_META_DATA)
